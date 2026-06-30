@@ -79,9 +79,12 @@ claim testable.)
 ### L1 — Per-modality tokenizers → common width `D`
 Map each modality's raw `s`-dim signal to tokens of width `D`:
 - **RGB / depth** — per-frame patch encoder. *Either* a from-scratch CNN/ViT patch-embed,
-  *or* a **pretrained video-AE encoder** (Cosmos/MagViT-style) — the latter treats the system
-  as a robot-state-enriched **video** autoencoder and is the fastest path to a working model.
-  Yields a grid of spatial tokens per frame.
+  *or* a **pretrained video-AE encoder** — treating the system as a robot-state-enriched
+  **video** autoencoder is the fastest path to a working model. Candidate backbones: **RVM**
+  (Recurrent Video Masked AE, `2512.13684`) — recurrent, causal, linear-in-horizon, trained by
+  predicting masked *future* frames (a built-in predictive-reconstruction objective);
+  **Adaptive 1D Video Diffusion AE** (`2602.04220`) — video → variable-length 1D discrete token
+  sequence + diffusion decoder; or a Cosmos/MagViT-2 tokenizer. Yields tokens per frame/clip.
 - **LiDAR / point cloud** — PointNet-lite → tokens.
 - **Proprio / odometry / IMU** — per-*chunk* DCT / frequency-domain tokenizer (FAST-style,
   `2501.09747`): map the chunk's smooth low-dim signal to the frequency domain, drop
@@ -122,12 +125,16 @@ Why the Perceiver pattern here specifically:
 1. **Modality-agnostic** — one block ingests vision, IMU, tactile with no per-modality plumbing.
 2. **Input-length-invariant** — exactly what native, async sampling rates demand.
 3. The latent bottleneck **is** the rate-distortion knob (`q`, `d` set the bitrate). This is the
-   layer that earns the word "codec."
+   layer that earns the word "codec." *Option:* make `q` **adaptive** per chunk — more tokens for
+   complex/high-motion chunks — as in the Adaptive 1D Video Diffusion AE (`2602.04220`).
 
 ### L4 — Cross-chunk causal latent transformer (streaming)
 The `n` chunk latents pass through a **causal** transformer so each is contextualized by the
 past → temporal coherence + a *streaming* codec (the Mimi/Moshi pattern). Output: **`L(n × d)`**
-— the deliverable, and the state sequence a world model (C2) rolls out on.
+— the deliverable, and the state sequence a world model (C2) rolls out on. *Alternative:* carry a
+**recurrent latent state** across chunks (RVM, `2512.13684`) — naturally causal and **linear** in
+horizon rather than quadratic, which suits long-horizon streaming better than a full causal
+transformer.
 
 Optional (deferred to v0.5): **RVQ** with the split-RVQ trick — early codes carry
 semantic/predictive signal, residual codes carry reconstruction detail. v0 can stay continuous.
@@ -136,16 +143,30 @@ semantic/predictive signal, residual codes carry reconstruction detail. v0 can s
 
 ## 3. Decoder + the joint-vs-independent experiment (sketch; out of scope for v0)
 
-Decoder mirrors the encoder: `L(n×d)` → per-modality decode heads → per-modality reconstruction.
-The thesis success criterion maps onto the video-anchored framing:
+**Decoder.** Mirrors the encoder: `L(n×d)` → decode heads → reconstruction. The decoder is
+**polymorphic** — the same latent feeds different heads by use case: *raw-signal* decode for
+transport/teleop, *action* decode for control, and later *text* decode for cloud monitoring and
+*3DGS/geometry* decode for spatial reasoning. Reconstruction is the training signal that forces
+information retention, not something run in the control loop. (A diffusion decoder — e.g. Adaptive
+1D Video Diffusion AE `2602.04220` — is a high-quality *offline* option but carries the GAIA-2
+latency caveat, so it is unsuitable for the reactive path.)
 
-> **Joint** (video AE **+** robot-state via FiLM/AdaLN, L2 on) vs **independent/anchor**
-> (video-only AE, L2 off). Measure the per-modality reconstruction delta — and check the gap
-> **grows during contact / cross-modal events**.
+**The experiment.** The thesis success criterion is the full joint-vs-independent test:
 
-Keep a path for an explicit **cross-modal predictive term**: mask one modality's tokens at L3,
-predict its decode from the rest (the MJEPA / `2009.01791` APD mechanism, the general form in
-`2411.00522`).
+> At equal total bitrate, the **joint** codec over all modalities reconstructs every modality
+> better than **N independent** per-modality codecs — and the gap **grows during cross-modal
+> events** (e.g. contact). Build the N-independent baseline from day one; it *is* the experiment.
+
+The **video-anchored** comparison (video+state with L2 on, vs video-only with L2 off) is the
+**first milestone** toward that — it isolates "does robot state help the video codec" — but it is
+*not* the full claim; don't let the POC collapse to it (keep ≥1 non-vision modality reconstructed
+and first-class).
+
+Run **both** objective variants — pure-reconstruction joint codec vs joint codec **+** an explicit
+**cross-modal predictive term** (mask one modality's tokens at L3, predict its decode from the
+rest — the MJEPA / `2009.01791` APD mechanism, general form in `2411.00522`). Otherwise the
+joint-vs-independent test can come out negative for the wrong reason — a bad objective, not absent
+headroom.
 
 ---
 
@@ -172,6 +193,7 @@ predict its decode from the rest (the MJEPA / `2009.01791` APD mechanism, the ge
 | Layer | Reference | Link |
 |---|---|---|
 | L1 tokenizers | DCT/freq-domain action+proprio FAST `2501.09747`, VQ-VLA `2507.01016`; IMU Mojito `2502.16175`; tactile Sparsh `2410.24090` | https://arxiv.org/abs/2501.09747 |
+| L1 vision branch | RVM recurrent video MAE `2512.13684`; Adaptive 1D Video Diffusion AE `2602.04220`; Cosmos/MagViT-2 `2310.05737` | https://arxiv.org/abs/2512.13684 |
 | L2 conditioning | FiLM `1709.07871`; AdaLN (DiT-style) | https://arxiv.org/abs/1709.07871 |
 | L3 fusion/compress | Perceiver IO `2107.14795` (asymmetric cross-attention) | https://arxiv.org/abs/2107.14795 |
 | L4 streaming | Mimi/Moshi `2410.00037`; RVQ `2203.01941` | — |
