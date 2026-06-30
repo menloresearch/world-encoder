@@ -16,9 +16,12 @@ python -m phase1.extract_frames --scene task_0001_user_0016_scene_0001_cfg_0003
 python -m phase1.train --frames-root /mnt/nas/data/RH20T/cfg3_frames/task_0001_user_0016_scene_0001_cfg_0003 \
     --epochs 3 --n-local 0 --max-steps 30
 
-# 3. scale: extract all, then DDP on the 7 free GPUs
-python -m phase1.extract_frames --all --num-workers 16
-torchrun --nproc_per_node=7 -m phase1.train --frames-root /mnt/nas/data/RH20T/cfg3_frames --epochs 30
+# 3. scale: extract all ROBOT scenes (add --include-human to also get human demos)
+python -m phase1.extract_frames --all --num-workers 32
+# DDP: launch via the venv python (`-m torch.distributed.run`); the `torchrun` BINARY
+# belongs to the base env and won't see the venv packages. GPU 0 is busy -> use 1..7.
+CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7 python -m torch.distributed.run --nproc_per_node=7 \
+    -m phase1.train --frames-root /mnt/nas/data/RH20T/cfg3_frames --epochs 30
 
 # 4. validate
 python -m phase1.validate --frames-root /mnt/nas/data/RH20T/cfg3_frames --ckpt /mnt/nas/data/RH20T/phase1_ckpt.pt
