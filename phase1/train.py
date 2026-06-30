@@ -128,6 +128,7 @@ def main():
             ep = step // spe
             torch.save({"model": raw.state_dict(), "args": vars(args), "step": step, "epoch": ep},
                        args.out.replace(".pt", f"_e{ep}.pt"))
+            log(f"== EPOCH {ep}/{args.epochs} done @ step {step}, saved _e{ep}.pt ==")
         if step >= total_steps:
             break
 
