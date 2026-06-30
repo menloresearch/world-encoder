@@ -19,9 +19,11 @@ DEF_RAW = "/mnt/nas/data/RH20T/cfg3_raw/RH20T_cfg3"
 DEF_DEST = "/mnt/nas/data/RH20T/cfg3_frames"
 
 
-def _is_scene(name):
+def _is_scene(name, include_human=False):
     # scenes look like task_..._scene_..._cfg_0003 (and _human variants); skip calib/etc.
-    return name.startswith("task_") and "scene_" in name
+    if not (name.startswith("task_") and "scene_" in name):
+        return False
+    return include_human or not name.endswith("_human")
 
 
 def _convert_one(raw_root, dest, scene):
@@ -36,6 +38,7 @@ def main():
     ap.add_argument("--dest", default=DEF_DEST)
     ap.add_argument("--scene", default=None, help="single scene folder to convert (debug)")
     ap.add_argument("--all", action="store_true", help="convert every scene under --raw-root")
+    ap.add_argument("--include-human", action="store_true", help="also extract _human demo scenes")
     ap.add_argument("--num-workers", type=int, default=16)
     args = ap.parse_args()
 
@@ -49,7 +52,7 @@ def main():
     if not args.all:
         ap.error("pass --scene <name> for one scene, or --all for everything")
 
-    scenes = sorted(s for s in os.listdir(args.raw_root) if _is_scene(s))
+    scenes = sorted(s for s in os.listdir(args.raw_root) if _is_scene(s, args.include_human))
     print(f"{len(scenes)} scenes -> {args.dest} (workers={args.num_workers})")
     with Pool(args.num_workers) as pool:
         for i, s in enumerate(
