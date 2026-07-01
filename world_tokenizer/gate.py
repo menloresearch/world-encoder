@@ -5,7 +5,7 @@ contact. Saves:
   gate_ft.png     — |force| & |torque| over the episode, contact peak marked
   gate_frames.png — frames around the peak (timestamped) to eyeball the contact
 
-Run: python -m phase1.gate --scene task_0001_user_0016_scene_0001_cfg_0003
+Run: python -m world_tokenizer.gate --scene task_0001_user_0016_scene_0001_cfg_0003
 """
 import argparse
 import glob

@@ -1,8 +1,8 @@
 """Phase 1 training — continue-LeJEPA on cfg3 video.
 
-Map-style (debug): python -m phase1.train --frames-root <dir> --epochs 3 --n-local 0 --max-steps 30
+Map-style (debug): python -m world_tokenizer.train --frames-root <dir> --epochs 3 --n-local 0 --max-steps 30
 WebDataset (full): CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7 python -m torch.distributed.run \
-                       --nproc_per_node=7 -m phase1.train --shards /mnt/nas/data/RH20T/cfg3_shards --epochs 30
+                       --nproc_per_node=7 -m world_tokenizer.train --shards /mnt/nas/data/RH20T/cfg3_shards --epochs 30
 
 Use the venv `python -m torch.distributed.run` (the torchrun binary is base-env). GPU 0 is
 busy -> pin 1..7. BF16, no GradScaler. LR 2e-4, AdamW, backbone NOT frozen.
@@ -17,8 +17,8 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
-from phase1.dataset import MultiCropRGB, collate, make_wds_loader, split_views
-from phase1.model import LeJEPAVideo
+from world_tokenizer.dataset import MultiCropRGB, collate, make_wds_loader, split_views
+from world_tokenizer.model import LeJEPAVideo
 
 
 def _dist_init():

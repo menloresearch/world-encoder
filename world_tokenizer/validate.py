@@ -5,7 +5,7 @@ predict the task id parsed from each frame's path. Beating chance => the latent 
 real signal => data + encoder are good. (Contact/no-contact probe needs F/T alignment via
 RH20TScene.get_ft_aligned — left as a follow-up; see README.)
 
-    python -m phase1.validate --frames-root <frames> --ckpt <phase1_ckpt.pt> --max-per-class 300
+    python -m world_tokenizer.validate --frames-root <frames> --ckpt <phase1_ckpt.pt> --max-per-class 300
 """
 import argparse
 import glob
@@ -18,7 +18,7 @@ from PIL import Image
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 
-from phase1.model import LeJEPAVideo
+from world_tokenizer.model import LeJEPAVideo
 
 _NORM = T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 _TF = T.Compose([T.Resize(256), T.CenterCrop(224), T.ToTensor(), _NORM])
@@ -33,7 +33,7 @@ def _task_id(path):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--frames-root", required=True)
-    ap.add_argument("--ckpt", default=None, help="phase1 checkpoint; omit to probe the warm-start")
+    ap.add_argument("--ckpt", default=None, help="trained checkpoint; omit to probe the warm-start")
     ap.add_argument("--max-per-class", type=int, default=300)
     ap.add_argument("--batch-size", type=int, default=128)
     args = ap.parse_args()

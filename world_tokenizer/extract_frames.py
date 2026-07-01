@@ -6,9 +6,9 @@ scenes have a depth-only / dropped camera), a bad scene never aborts the batch, 
 already-extracted cams are skipped on re-run. Output: <dest>/<scene>/<cam_*>/color/<ts>.jpg
 
 Examples:
-    python -m phase1.extract_frames --scene task_0001_user_0016_scene_0001_cfg_0003
-    python -m phase1.extract_frames --all --num-workers 32         # all robot scenes
-    python -m phase1.extract_frames --all --include-human          # also human demos
+    python -m world_tokenizer.extract_frames --scene task_0001_user_0016_scene_0001_cfg_0003
+    python -m world_tokenizer.extract_frames --all --num-workers 32         # all robot scenes
+    python -m world_tokenizer.extract_frames --all --include-human          # also human demos
 """
 import argparse
 import os

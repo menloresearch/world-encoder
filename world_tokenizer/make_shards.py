@@ -3,7 +3,7 @@
 Training off ~2.3M tiny jpgs over NFS is IO-bound (random small-file reads). Packing
 them into ~10k-image tar shards turns that into large sequential reads. One-time cost.
 
-    python -m phase1.make_shards --num-workers 32
+    python -m world_tokenizer.make_shards --num-workers 32
 """
 import argparse
 import glob

@@ -7,7 +7,7 @@ IMPORTANT: split is BY SCENE, not by frame — entire scenes are held out for te
 measures generalization to unseen episodes (a random frame split leaks near-duplicate frames and
 trivially scores ~1.0). Same scene split + same embeddings extraction for every checkpoint.
 
-    python -m phase1.probe_curve --ckpts e0 e3 e6 e10
+    python -m world_tokenizer.probe_curve --ckpts e0 e3 e6 e10
 """
 import argparse
 import glob
@@ -21,7 +21,7 @@ import torchvision.transforms as T
 from PIL import Image
 from sklearn.linear_model import LogisticRegression
 
-from phase1.model import LeJEPAVideo
+from world_tokenizer.model import LeJEPAVideo
 
 FRAMES = "/mnt/nas/data/RH20T/cfg3_frames"
 CKPT = "/mnt/nas/data/RH20T/phase1_ckpt_{}.pt"
