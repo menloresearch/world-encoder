@@ -29,6 +29,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--frames-root", default=FRAMES)
     ap.add_argument("--ckpts", nargs="+", default=["e0", "e3", "e6", "e10"])
+    ap.add_argument("--ckpt-template", default=CKPT,
+                    help="path template; '{}' filled with each ckpt tag (e.g. e3)")
     ap.add_argument("--per-scene", type=int, default=12)
     ap.add_argument("--max-per-class", type=int, default=300)
     ap.add_argument("--k", type=int, default=20)
@@ -47,7 +49,7 @@ def main():
     print(f"{'ckpt':>5} | {'linear':>7} | {'kNN(20)':>8} | {'RankMe':>7}")
     for c in args.ckpts:
         if c != "e0":
-            net.load_state_dict(torch.load(CKPT.format(c), map_location=dev)["model"])
+            net.load_state_dict(torch.load(args.ckpt_template.format(c), map_location=dev)["model"])
         X = embed(net, paths, dev)
         lin = LogisticRegression(max_iter=3000).fit(X[tr], y[tr]).score(X[te], y[te])
         knn = KNeighborsClassifier(n_neighbors=args.k).fit(X[tr], y[tr]).score(X[te], y[te])
