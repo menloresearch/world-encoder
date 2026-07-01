@@ -30,10 +30,13 @@ scenes, chance 0.015); RankMe = effective rank of embeddings (label-free), max 7
 |------|--------|---------|--------|
 | **e0** (warm-start) | **0.908** | **0.814** | **300** |
 | e3 | 0.738 | 0.324 | 217 |
-| e10 | 0.717 | (↓) | (↓) |
+| e6 | 0.731 | 0.312 | 184 |
+| e10 | 0.717 | 0.309 | 158 |
 
-All three metrics — including **label-free RankMe (300 → 217 = partial dimensional collapse)** —
-fall after finetuning. **The warm-start (e0) is the best encoder.**
+All three metrics fall monotonically after finetuning — including **label-free RankMe, which
+halves (300 → 158)**, i.e. real effective-rank / dimensional collapse. Note RankMe keeps eroding
+*even after* the probe accuracies plateau (linear/kNN flatten after e3, rank keeps dropping to
+e10) → **more training = more rank loss.** **The warm-start (e0) is the best encoder.**
 
 **Takeaway / next:** continuing plain LeJEPA on one config's video at LR 2e-4 over-adapts and
 forgets the strong pretrained features. Try much lower LR (~2e-5) / fewer steps, a
