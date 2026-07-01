@@ -15,33 +15,50 @@
 
 ## Progress — Stages 0 & 1 (done)
 
-Stage 0 (benchmark the warm-start checkpoint) and Stage 1 (finetune on cfg3 video) are done.
-The full pipeline is built and verified; the finetune produced a clear **negative result**.
+**Verdict: finetuning LeJEPA on cfg3 video is a *no-op* — it neither meaningfully helps nor
+harms. Keep the warm-start `e0` as the encoder; the real signal is in Stage 2+.**
 
-**Pipeline (verified end-to-end):** RH20T cfg3 → extract frames (`rh20t_api`) →
-**2,330,532 jpgs** (799 robot scenes, 66 tasks) → **240 WebDataset shards** →
-**DDP×7 continue-LeJEPA** (warm-start `OK-AI/lejepa-vitb16-pretrain-in1k`, LR 2e-4, 10 epochs,
-BF16, ~2 h, no loss collapse) → eval. Everything runs on the NAS (see `world_tokenizer/`).
+**Pipeline (verified end-to-end):** RH20T cfg3 → extract frames (`rh20t_api`) → **2,330,532 jpgs**
+(799 robot scenes, 66 tasks) → **240 WebDataset shards** → **DDP×7 continue-LeJEPA** (warm-start
+`OK-AI/lejepa-vitb16-pretrain-in1k`, BF16, ~2 h/10 epochs, 7.1 steps/s, no loss collapse) → eval.
+Everything runs on the NAS (see `world_tokenizer/`).
 
-**Result — finetuning *degraded* the encoder.** Scene-held-out probe (66-task id, unseen
-scenes, chance 0.015); RankMe = effective rank of embeddings (label-free), max 768:
+**How to read the metrics (this is the whole story):**
+- **task-id probe** (66-way, chance 0.015): **saturated** — the ImageNet warm-start already scores
+  0.91, so it mostly measures drift *away from ImageNet appearance*, not real damage. Misleading.
+- **RankMe** (label-free effective rank, max 768): representation *health* / collapse detector.
+- **contact / force** (from F/T, scene-held-out, error-barred): *robot-relevant usefulness* — the
+  thing we actually care about.
 
-| ckpt | linear | kNN(20) | RankMe |
-|------|--------|---------|--------|
-| **e0** (warm-start) | **0.908** | **0.814** | **300** |
-| e3 | 0.738 | 0.324 | 217 |
-| e6 | 0.731 | 0.312 | 184 |
-| e10 | 0.717 | 0.309 | 158 |
+**LR matters — the scary early result was a too-hot LR, not intrinsic:**
 
-All three metrics fall monotonically after finetuning — including **label-free RankMe, which
-halves (300 → 158)**, i.e. real effective-rank / dimensional collapse. Note RankMe keeps eroding
-*even after* the probe accuracies plateau (linear/kNN flatten after e3, rank keeps dropping to
-e10) → **more training = more rank loss.** **The warm-start (e0) is the best encoder.**
+| ckpt | task-id lin | task-id kNN | RankMe |
+|------|-------------|-------------|--------|
+| e0 (warm-start) | 0.908 | 0.814 | 300 |
+| LR **2e-4** (hot) e10 | 0.717 | 0.309 | **158** ← rank collapse |
+| LR **2e-5** (gentle) e6 | 0.744 | 0.320 | **285** ← healthy, no collapse |
 
-**Takeaway / next:** continuing plain LeJEPA on one config's video at LR 2e-4 over-adapts and
-forgets the strong pretrained features. Try much lower LR (~2e-5) / fewer steps, a
-less-saturated eval (contact/gripper from F/T), and keep **e0** as the current-best encoder and
-the Stage-2 starting point.
+Hot LR genuinely collapsed the rank (300→158); **lowering to 2e-5 fixes it** (RankMe ~285). The
+remaining task-id drop is the saturated-metric artifact, not damage.
+
+**Robot-relevant eval (5 scene-split seeds, mean±std) — the decider:**
+
+| ckpt | contact-linear | contact-kNN | force-R² |
+|------|----------------|-------------|----------|
+| e0 | 0.683 ±0.011 | 0.639 ±0.013 | 0.028 ±0.036 |
+| e6 (gentle) | 0.673 ±0.014 | 0.674 ±0.004 | −0.004 ±0.039 |
+| e10 (hot) | 0.675 ±0.006 | 0.671 ±0.006 | 0.050 ±0.022 |
+
+Contact is **flat** across recipes; **force-R² ≈ 0 for everyone** — a single RGB frame doesn't
+encode force, and finetuning can't create signal that isn't in the data.
+
+**Conclusion:** it's **not a data-quantity or LR problem** — more cfg3 video or lower LR won't
+help; the ceiling is that video frames alone lack the robot-relevant signal. **Keep `e0`; Stage 1
+is a confirmed no-op. Move to Stage 2** (add robot state / force), where finetuning has new signal.
+
+**Eval lesson:** never trust one *saturated* metric — pair a **health** metric (RankMe) with a
+**usefulness** metric on an *unsaturated, task-relevant* target (contact/force), with error bars.
+Harness: `world_tokenizer/{eval_lejepa,contact_probe,robust_robot_eval}.py`.
 
 ---
 
