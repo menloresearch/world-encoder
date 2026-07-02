@@ -88,3 +88,11 @@ class SceneState:
             symlog(ftv),               # 6
             symlog(g),                 # 1
         ]).astype(np.float32)          # 28
+
+    def raw_ft(self, ts):
+        """Interpolated zeroed force/torque (6,) in raw units — for leak-free force targets."""
+        return _interp(self._ft_t, self._ft_v, ts)
+
+
+# index of the F/T block inside the 28-dim state vector (exclude for leak-free force prediction)
+FT_DIMS = list(range(21, 27))
