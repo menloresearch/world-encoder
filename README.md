@@ -13,8 +13,6 @@ downstream models (VLAs, world models) can reuse one shared encoder instead of a
 - Stage 6 — state + audio decoder on Stage-5 latents.
 - Stage 7 — real Microfactory data, same recipe.
 
-Project 2 (MolmoBot VLA for Microfactory-1) runs in parallel and is tracked separately.
-
 ## Stages 0-1 — done
 
 Pipeline verified end to end: cfg3 → 2.33M frames (799 scenes, 66 tasks) → 240 WebDataset shards →
