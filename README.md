@@ -1,111 +1,81 @@
 # World Autoencoder
 
-## Research Plan — Project 1: World Tokenizer
+An encoder that tokenises a robot's sensor feeds (video, state, audio) with LeJEPA on RH20T, so
+downstream models (VLAs, world models) can reuse one shared encoder instead of a vision-only one.
 
-### Roadmap
-- **Stage 0** ✅ — Benchmarking existing LeJEPA checkpoints
-- **Stage 1** ✅ — LeJEPA trained/finetuned on RH20T_cfg3 **video** data only
-- **Stage 2** — LeJEPA training with a modified encoder on RH20T_cfg3 **video + robot_state** data
-- **Stage 3** — Train a **robot_state decoder** on the output of stage 2
-- **Stage 5** — Scale encoder to **video + state + audio** and adopt the **MJEPA** training strategy
-- **Stage 6** — Train a **state + audio decoder** on the output of stage 5
-- **Stage 7** — Collect **real data from Microfactory** and train using the strategy developed in stages 1–6
+## Roadmap — Project 1: World Tokenizer
 
----
+- Stage 0 — done. Benchmark existing LeJEPA checkpoints.
+- Stage 1 — done. LeJEPA finetune on cfg3 video only.
+- Stage 2 — next. Modified encoder, cfg3 video + robot_state.
+- Stage 3 — robot_state decoder on Stage-2 latents.
+- Stage 5 — scale to video + state + audio, MJEPA training.
+- Stage 6 — state + audio decoder on Stage-5 latents.
+- Stage 7 — real Microfactory data, same recipe.
 
-## Progress — Stages 0 & 1 (done)
+Project 2 (MolmoBot VLA for Microfactory-1) runs in parallel and is tracked separately.
 
-**Verdict: finetuning LeJEPA on cfg3 video is a *no-op* — it neither meaningfully helps nor
-harms. Keep the warm-start `e0` as the encoder; the real signal is in Stage 2+.**
+## Stages 0-1 — done
 
-**Pipeline (verified end-to-end):** RH20T cfg3 → extract frames (`rh20t_api`) → **2,330,532 jpgs**
-(799 robot scenes, 66 tasks) → **240 WebDataset shards** → **DDP×7 continue-LeJEPA** (warm-start
-`OK-AI/lejepa-vitb16-pretrain-in1k`, BF16, ~2 h/10 epochs, 7.1 steps/s, no loss collapse) → eval.
-Everything runs on the NAS (see `world_tokenizer/`).
+Pipeline verified end to end: cfg3 → 2.33M frames (799 scenes, 66 tasks) → 240 WebDataset shards →
+DDP continue-LeJEPA from `OK-AI/lejepa-vitb16-pretrain-in1k` → eval. Runs entirely on the NAS.
 
-**How to read the metrics (this is the whole story):**
-- **task-id probe** (66-way, chance 0.015): **saturated** — the ImageNet warm-start already scores
-  0.91, so it mostly measures drift *away from ImageNet appearance*, not real damage. Misleading.
-- **RankMe** (label-free effective rank, max 768): representation *health* / collapse detector.
-- **contact / force** (from F/T, scene-held-out, error-barred): *robot-relevant usefulness* — the
-  thing we actually care about.
+Finetuning on cfg3 video is a no-op — no help, no harm. Keep the warm-start (`e0`).
+- Hot LR (2e-4) collapsed RankMe 300→158. LR 2e-5 fixes it (RankMe ~285).
+- The task-id probe drop (0.91→0.74) is a saturated metric — it tracks ImageNet appearance, not damage.
+- Robot-relevant eval (contact + force, 5-seed scene-held-out) is flat, and force-R²≈0 for every checkpoint.
+- force-R²≈0 is the point: a single frame doesn't contain force, so vision alone can't encode it.
 
-**LR matters — the scary early result was a too-hot LR, not intrinsic:**
+Eval rule from here: pair RankMe (health) with an unsaturated robot-relevant probe (contact/force),
+scene-held-out and multi-seed. One saturated metric will mislead you.
 
-| ckpt | task-id lin | task-id kNN | RankMe |
-|------|-------------|-------------|--------|
-| e0 (warm-start) | 0.908 | 0.814 | 300 |
-| LR **2e-4** (hot) e10 | 0.717 | 0.309 | **158** ← rank collapse |
-| LR **2e-5** (gentle) e6 | 0.744 | 0.320 | **285** ← healthy, no collapse |
+## Stage 2 — video + robot_state (next)
 
-Hot LR genuinely collapsed the rank (300→158); **lowering to 2e-5 fixes it** (RankMe ~285). The
-remaining task-id drop is the saturated-metric artifact, not damage.
+Question: does adding robot_state recover the force/contact signal vision can't (R²≈0 → high)?
 
-**Robot-relevant eval (5 scene-split seeds, mean±std) — the decider:**
+The eval must be leak-free. robot_state contains F/T, so predict either future force/contact (t+Δ),
+or force from a latent built without force (vision + joints + gripper → force). Predicting current
+force from an input that already holds it proves nothing.
 
-| ckpt | contact-linear | contact-kNN | force-R² |
-|------|----------------|-------------|----------|
-| e0 | 0.683 ±0.011 | 0.639 ±0.013 | 0.028 ±0.036 |
-| e6 (gentle) | 0.673 ±0.014 | 0.674 ±0.004 | −0.004 ±0.039 |
-| e10 (hot) | 0.675 ±0.006 | 0.671 ±0.006 | 0.050 ±0.022 |
+Steps, one change at a time:
+1. Data. Fix the `rh20t_api` aligned getters (`get_joint_angles_aligned`, `get_gripper` return None
+   on some scenes; `get_ft_aligned` works). Build the `{frame, state}` loader. Preprocess per
+   modality: symlog for unbounded (velocity, position, current, tactile), sin/cos for angles, 6D for
+   quaternions.
+2. Control, before building the encoder. `[frozen e0 vision emb ⊕ state] → MLP → future/inferred
+   force`. Compare vision-only, state-only, fused. If fused beats neither, stop and rethink.
+3. Encoder. Query-transformer (Perceiver) fusing ViT tokens + state tokens into world tokens.
+   Vision backbone frozen at first. Start with two losses only — cross-modal masked latent
+   prediction + per-modal SIGReg. Add joint SIGReg, then action-conditioned prediction, as ablations.
+4. Eval. RankMe per-modality and fused; force/contact probes. Success = fused beats vision-alone.
 
-Contact is **flat** across recipes; **force-R² ≈ 0 for everyone** — a single RGB frame doesn't
-encode force, and finetuning can't create signal that isn't in the data.
+MJEPA finding to respect: a shared encoder without cross-modal prediction underperforms a single
+modality. The masked cross-modal prediction loss is required, not optional — SIGReg only prevents
+collapse.
 
-**Conclusion:** it's **not a data-quantity or LR problem** — more cfg3 video or lower LR won't
-help; the ceiling is that video frames alone lack the robot-relevant signal. **Keep `e0`; Stage 1
-is a confirmed no-op. Move to Stage 2** (add robot state / force), where finetuning has new signal.
+## Architecture
 
-**Eval lesson:** never trust one *saturated* metric — pair a **health** metric (RankMe) with a
-**usefulness** metric on an *unsaturated, task-relevant* target (contact/force), with error bars.
-Harness: `world_tokenizer/{eval_lejepa,contact_probe,robust_robot_eval}.py`.
+- Base: `galilai-group/lejepa`.
+- Dataset: RH20T cfg3 (smallest subset; scale to others later).
+- Encoder: query-transformer (Perceiver) for cross-modal compression, trained with LeJEPA.
+- Decoder: PixNeRD → latent diffusion (Stage 3+).
+- Latent: continuous and discrete.
+- Preprocess per modality: symlog (unbounded), sin/cos (angles), 6D / canonicalize (quaternions).
 
----
+Losses:
 
-## Architecture (scratchpad)
+| # | loss | role |
+|---|------|------|
+| 1 | masked latent prediction over (modality × time) tokens | the learning signal; predict-don't-equate respects info asymmetry, avoids intersection collapse, robust to missing modalities |
+| 2 | per-modality SIGReg | anti-collapse + magnitude standardiser, so modalities are commensurate before fusion |
+| 3 | joint SIGReg on the fused latent | keep the fused latent high-rank |
+| 4 | action-conditioned forward prediction (only if actions matter) | the causal engine; same-time alignment is only correlational |
 
-Base: **`galilai-group/lejepa`**
-
-**Dataset** ✅
-- **RH20T (cfg3)** — smallest subset, gets us started fastest. Scale to the other subsets later.
-
-**Latent structure**
-- continuous, discrete
-
-**Pre-processing** (per modality)
-- **symlog** — unbounded quantities (velocity, position, current, tactile)
-- **sin/cos** — angles
-- **6D / canonicalize** — quaternions
-
-**Encoder** ❓
-- LeJEPA
-
-**Decoder** ✅
-- **PixNeRD → latent diffusion model**
-
-**Training framework** ❓
-- LeJEPA minimal example (no full training script): https://github.com/galilai-group/lejepa/blob/main/MINIMAL.md
-- Full training example (le-wm): https://github.com/lucas-maes/le-wm/tree/main/config/train
-- stable-pretraining (LeJEPA lab; framework for LeJEPA + all SSL — BYOL, DINO, …):
-  https://github.com/galilai-group/stable-pretraining/blob/main/stable_pretraining/methods/lejepa.py ·
-  [METHODS.md](https://github.com/galilai-group/stable-pretraining/blob/main/METHODS.md)
-
-**Losses** ✅ — LeJEPA loss → SIGReg + prediction (MSE).
-
-The loss combination and why we need it:
-
-| # | Loss | What it does | Why (failure it prevents) |
-|---|------|--------------|---------------------------|
-| 1 | Masked latent prediction over (modality × time) tokens — *what MJEPA does* | Predict masked embeddings from visible ones (cross-modal + temporal in one mask) | The representation signal. Predict-don't-equate respects info asymmetry → avoids intersection-collapse. Robust to signal loss by default. |
-| 2 | Per-modality SIGReg | Push each modality's embedding → isotropic Gaussian | Anti-collapse + magnitude standardizer (makes modalities commensurate before fusion). Joint SIGReg would force cross-modal independence; per-modal still prevents collapse. |
-| 3 | Joint SIGReg on the fused latent | Push fused latent → isotropic / high-rank | Keeps the world-model latent expressive, not collapsed. |
-| 4 | Action-conditioned forward prediction *(only if actions matter — needed for a robotics model)* | Predict future fused latent from current + action | The causal engine — same-time alignment is only correlational. |
-
-**Post-training experiments:** TBD
-
----
+Frameworks: [stable-pretraining](https://github.com/galilai-group/stable-pretraining) (LeJEPA +
+other SSL), [le-wm](https://github.com/lucas-maes/le-wm) (full training example).
 
 ## Code
-`world_tokenizer/` — the LeJEPA + RH20T_cfg3 pipeline (extract → shards → DDP train → eval).
-Everything runs from the NAS: `source /mnt/nas/data/RH20T/env.sh`, then see
-[`world_tokenizer/README.md`](world_tokenizer/README.md) for the run order.
+
+`world_tokenizer/` — the pipeline and evals. Runs from the NAS: `source /mnt/nas/data/RH20T/env.sh`
+(nothing writes to `/`). Run order and implementation notes in
+[`world_tokenizer/README.md`](world_tokenizer/README.md).
