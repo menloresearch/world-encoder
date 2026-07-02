@@ -7,7 +7,7 @@ downstream models (VLAs, world models) can reuse one shared encoder instead of a
 
 - Stage 0 — done. Benchmark existing LeJEPA checkpoints.
 - Stage 1 — done. LeJEPA finetune on cfg3 video only.
-- Stage 2 — core verified. Perceiver encoder, cfg3 video + robot_state.
+- Stage 2 — verified. Perceiver encoder, cfg3 video + robot_state; cross-modal latent predicts the robot 2× better than vision, beats a compression control on all seeds.
 - Stage 3 — robot_state decoder on Stage-2 latents.
 - Stage 5 — scale to video + state + audio, MJEPA training.
 - Stage 6 — state + audio decoder on Stage-5 latents.
@@ -42,15 +42,23 @@ latent better than either modality alone, and is the gain *cross-modal* (not jus
   Stage 5); not action-conditioned (#4).
 - Eval: cross-modal predictability + RankMe, scene-held-out, multi-seed, with a PCA-256 compression control.
 
-**Outcome — fusion works, and the gain is genuinely cross-modal:**
-- Minimal model: cross-modal vision latent beats raw vision **+0.12 R²** (all 5 seeds), no collapse.
-- Perceiver: beats raw vision (**+0.27**) *and* beats PCA-256 compression (**+1.80**) on all 5 seeds;
-  RankMe 132 (no collapse). Beating compression ⇒ the gain is cross-modal, not dimensionality reduction.
-- Caveat: absolute R² came out negative — the probe overfit on the 6.3k-frame cut used to dodge NAS
-  congestion. The *relative, all-seed-consistent* ordering is solid; clean positive absolutes need more frames.
+**Outcome — fusion works, and the gain is genuinely cross-modal.** Predicting robot state (R²,
+5 seeds, scene-held-out, 24k frames, encoder retrained per split):
 
-**Left:** clean positive absolutes (more frames), Step-6 ablations (bottleneck size, joint-SIGReg
-on/off), and **modality × time** (temporal masking → predict future force/contact) = the Stage-5 upgrade.
+| feature (→ predict robot state) | R² |
+|---|---|
+| **Perceiver `z_v` (256, cross-modal, state masked)** | **0.551 ±0.018** |
+| raw vision (768, mean-pooled) | 0.257 ±0.075 |
+| PCA-256 of LeJEPA vision (compression control) | 0.134 ±0.047 |
+
+- `z_v` beats raw vision by **+0.294 ±0.078** and PCA-256 by **+0.417 ±0.050** — **both on all 5 seeds**.
+- Beating the PCA compression control ⇒ the gain is **cross-modal, not dimensionality reduction**.
+  A latent 3× smaller than raw vision predicts the robot ~2× better. RankMe 211 (no collapse).
+- The vision-only fused latent (`z_v`) is used at eval, so no state leaks in — the encoder has *learned*
+  to read robot-relevant structure out of pixels by having been trained alongside state.
+
+**Left:** Step-6 ablations (bottleneck size, joint-SIGReg on/off), and **modality × time** (temporal
+masking → predict future force/contact) = the Stage-5 upgrade.
 
 Design note: masked cross-modal prediction is required, not optional — a shared encoder without it
 underperforms single-modality (MJEPA). SIGReg only prevents collapse.
