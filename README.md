@@ -6,62 +6,15 @@ downstream models (VLAs, world models) can reuse one shared encoder instead of a
 ## Roadmap — Project 1: World Tokenizer
 
 - Stage 0 — done. Benchmark existing LeJEPA checkpoints.
-- Stage 1 — done. LeJEPA finetune on cfg3 video only.
-- Stage 2 — verified. Perceiver encoder, cfg3 video + robot_state; cross-modal latent predicts the robot 2× better than vision, beats a compression control on all seeds.
+- Stage 1 — done. LeJEPA finetune on cfg3 video only (a no-op; keep the warm-start).
+- Stage 2 — verified. Perceiver encoder on cfg3 video + robot_state; the cross-modal latent predicts
+  the robot ~2× better than vision and beats a compression control on all seeds.
 - Stage 3 — robot_state decoder on Stage-2 latents.
-- Stage 5 — scale to video + state + audio, MJEPA training.
+- Stage 5 — scale to video + state + audio, MJEPA training (modality × time).
 - Stage 6 — state + audio decoder on Stage-5 latents.
 - Stage 7 — real Microfactory data, same recipe.
 
-## Stages 0-1 — done
-
-Pipeline verified end to end: cfg3 → 2.33M frames (799 scenes, 66 tasks) → 240 WebDataset shards →
-DDP continue-LeJEPA from `OK-AI/lejepa-vitb16-pretrain-in1k` → eval. Runs entirely on the NAS.
-
-Finetuning on cfg3 video is a no-op — no help, no harm. Keep the warm-start (`e0`).
-- Hot LR (2e-4) collapsed RankMe 300→158. LR 2e-5 fixes it (RankMe ~285).
-- The task-id probe drop (0.91→0.74) is a saturated metric — it tracks ImageNet appearance, not damage.
-- Robot-relevant eval (contact + force, 5-seed scene-held-out) is flat, and force-R²≈0 for every checkpoint.
-- force-R²≈0 is the point: a single frame doesn't contain force, so vision alone can't encode it.
-
-Eval rule from here: pair RankMe (health) with an unsaturated robot-relevant probe (contact/force),
-scene-held-out and multi-seed. One saturated metric will mislead you.
-
-## Stage 2 — video + robot_state (core verified)
-
-Question: does fusing video + robot_state in one encoder learn genuine cross-modal structure — a
-latent better than either modality alone, and is the gain *cross-modal* (not just compression)?
-
-**What we ran** (single timestep, cfg3 video + robot_state):
-- Signal gate: frozen vision → state R² = **0.43** (tcp 0.73) — cross-modal signal is real. (`step1_gate`)
-- State loader: joints→sin/cos, tcp→symlog, quat→6D, F/T→symlog, gripper→symlog = 28-dim. (`state`)
-- Encoder: **Perceiver** — query `CrossAttention` over vision patch tokens + state token → bottleneck
-  latent. (`mm_perceiver`; a minimal MLP version in `mm_jepa` first)
-- Loss: **masked latent prediction across MODALITIES** (mask one, predict its EMA-target latent from
-  the other; predict-don't-equate) + **per-modal SIGReg** + **joint SIGReg**. Not ×time (that's
-  Stage 5); not action-conditioned (#4).
-- Eval: cross-modal predictability + RankMe, scene-held-out, multi-seed, with a PCA-256 compression control.
-
-**Outcome — fusion works, and the gain is genuinely cross-modal.** Predicting robot state (R²,
-5 seeds, scene-held-out, 24k frames, encoder retrained per split):
-
-| feature (→ predict robot state) | R² |
-|---|---|
-| **Perceiver `z_v` (256, cross-modal, state masked)** | **0.551 ±0.018** |
-| raw vision (768, mean-pooled) | 0.257 ±0.075 |
-| PCA-256 of LeJEPA vision (compression control) | 0.134 ±0.047 |
-
-- `z_v` beats raw vision by **+0.294 ±0.078** and PCA-256 by **+0.417 ±0.050** — **both on all 5 seeds**.
-- Beating the PCA compression control ⇒ the gain is **cross-modal, not dimensionality reduction**.
-  A latent 3× smaller than raw vision predicts the robot ~2× better. RankMe 211 (no collapse).
-- The vision-only fused latent (`z_v`) is used at eval, so no state leaks in — the encoder has *learned*
-  to read robot-relevant structure out of pixels by having been trained alongside state.
-
-**Left:** Step-6 ablations (bottleneck size, joint-SIGReg on/off), and **modality × time** (temporal
-masking → predict future force/contact) = the Stage-5 upgrade.
-
-Design note: masked cross-modal prediction is required, not optional — a shared encoder without it
-underperforms single-modality (MJEPA). SIGReg only prevents collapse.
+Per-stage run notes and results: [`EXPERIMENTS.md`](EXPERIMENTS.md).
 
 ## Architecture
 
