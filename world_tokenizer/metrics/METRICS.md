@@ -53,7 +53,7 @@ per-tier accuracy *profile* is the metric.
 | 1 | same episode, temporally distant (`|Δt|` > threshold AND state distance > percentile, to filter revisited poses) | world-state sensitivity — same scene/objects/background, only the state differs |
 | 2 | same task, different episode | layout/phase sensitivity |
 | 3 | same config, different task | activity sensitivity (should be ≈100 %) |
-| 4 | different config | sanity floor only — OOD for the cfg3-trained encoder, never the headline |
+| 4 | different config | sanity floor only — the easiest tier, never the headline. (Training targets the full cfg1–7 dataset; cfg3-only is just the current POC, where this tier is additionally OOD and even less informative) |
 | 5 | modality mismatch: anchor's own image with a distant frame's state `(v_t, s_t′)`, and symmetrically `(v_t′, s_t)` | fusion — does the latent actually use both inputs? |
 
 **On circularity.** Selecting negatives from metadata (task/episode/config IDs, timestamps) and raw
