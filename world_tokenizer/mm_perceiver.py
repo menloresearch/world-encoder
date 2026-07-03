@@ -25,30 +25,32 @@ class PerceiverFuse(nn.Module):
 
     def __init__(self, d, n_queries=8, n_heads=8, depth=2):
         super().__init__()
-        self.q = nn.Parameter(torch.randn(n_queries, d) * 0.02)
+        self.q = nn.Parameter(torch.randn(n_queries, d) * 0.02)  # learnable queries [M, d]
         self.ca = nn.ModuleList([CrossAttention(d, d, n_heads) for _ in range(depth)])
         self.n1 = nn.ModuleList([nn.LayerNorm(d) for _ in range(depth)])
         self.ffn = nn.ModuleList([_mlp(d, d, 4 * d) for _ in range(depth)])
         self.n2 = nn.ModuleList([nn.LayerNorm(d) for _ in range(depth)])
 
     def forward(self, context, attn_mask=None):
-        x = self.q.unsqueeze(0).expand(context.shape[0], -1, -1)
+        # context: [B, T, d] (T = n_patch + 1 = 197); attn_mask: [M, T] bool, True=blocked
+        x = self.q.unsqueeze(0).expand(context.shape[0], -1, -1)  # [M, d] -> [B, M, d]
         for ca, n1, ffn, n2 in zip(self.ca, self.n1, self.ffn, self.n2):
-            x = x + ca(n1(x), context, attn_mask=attn_mask)
-            x = x + ffn(n2(x))
-        return x.mean(1)  # [B, d]
+            # cross-attn: queries [B, M, d] attend to context [B, T, d] -> [B, M, d]
+            x = x + ca(n1(x), context, attn_mask=attn_mask)      # [B, M, d]
+            x = x + ffn(n2(x))                                   # [B, M, d]
+        return x.mean(1)  # pool over M queries -> [B, d]
 
 
 class MMPerceiver(nn.Module):
     def __init__(self, d=256, vis_dim=768, state_dim=28, n_patch=196, n_queries=8,
                  lamb=0.02, ema=0.99, n_slices=512):
         super().__init__()
-        self.proj_v = nn.Linear(vis_dim, d)
-        self.proj_s = nn.Linear(state_dim, d)
-        self.mod = nn.Parameter(torch.randn(2, d) * 0.02)   # modality embeddings [vision, state]
+        self.proj_v = nn.Linear(vis_dim, d)                 # vision proj: 768 -> d
+        self.proj_s = nn.Linear(state_dim, d)               # state proj:  28 -> d
+        self.mod = nn.Parameter(torch.randn(2, d) * 0.02)   # modality embeddings [2, d] (vision, state)
         self.fuse = PerceiverFuse(d, n_queries)
-        self.pred_s = _mlp(d, d)   # fused(vision) -> predict state target
-        self.pred_v = _mlp(d, d)   # fused(state)  -> predict vision target
+        self.pred_s = _mlp(d, d)   # fused(vision) [B,d] -> predict state target [B,d]
+        self.pred_v = _mlp(d, d)   # fused(state)  [B,d] -> predict vision target [B,d]
         self.tgt_v = copy.deepcopy(self.proj_v)
         self.tgt_s = copy.deepcopy(self.proj_s)
         for p in list(self.tgt_v.parameters()) + list(self.tgt_s.parameters()):
@@ -63,35 +65,39 @@ class MMPerceiver(nn.Module):
                 pt.mul_(self.ema).add_(po.detach(), alpha=1 - self.ema)
 
     def _context(self, patch, state):
-        vt = self.proj_v(patch) + self.mod[0]                    # [B,196,d]
-        st = (self.proj_s(state) + self.mod[1]).unsqueeze(1)     # [B,1,d]
-        return torch.cat([vt, st], dim=1)                        # [B,197,d]
+        # patch: [B, 196, vis_dim=768]; state: [B, state_dim=28]
+        vt = self.proj_v(patch) + self.mod[0]                    # [B,196,768] -> [B,196,d], + mod emb [d]
+        st = (self.proj_s(state) + self.mod[1]).unsqueeze(1)     # [B,28] -> [B,d] -> [B,1,d]
+        return torch.cat([vt, st], dim=1)                        # [B, 197, d]  (196 vision + 1 state)
 
     def _mask(self, block_state, device):
-        """[n_queries, n_patch+1] bool, True=blocked. block_state=True hides the state token."""
-        m = torch.zeros(self.n_queries, self.n_patch + 1, dtype=torch.bool, device=device)
+        """[n_queries, n_patch+1] = [M, 197] bool, True=blocked. block_state=True hides the state token."""
+        m = torch.zeros(self.n_queries, self.n_patch + 1, dtype=torch.bool, device=device)  # [M, 197]
         if block_state:
-            m[:, self.n_patch:] = True     # hide state -> fuse from vision only
+            m[:, self.n_patch:] = True     # hide state col (last) -> fuse from vision only
         else:
-            m[:, :self.n_patch] = True     # hide vision -> fuse from state only
+            m[:, :self.n_patch] = True     # hide vision cols (first 196) -> fuse from state only
         return m
 
     def forward(self, patch, state):
-        ctx = self._context(patch, state)
+        # patch: [B, 196, 768]; state: [B, 28]
+        ctx = self._context(patch, state)                        # [B, 197, d]
         with torch.no_grad():
-            tv = self.tgt_v(patch).mean(1)                       # vision target (pooled) [B,d]
-            ts = self.tgt_s(state)                               # state target [B,d]
-        z_from_v = self.fuse(ctx, self._mask(block_state=True, device=patch.device))   # state hidden
-        z_from_s = self.fuse(ctx, self._mask(block_state=False, device=patch.device))  # vision hidden
+            tv = self.tgt_v(patch).mean(1)                       # [B,196,768] -> [B,196,d] -> pooled [B,d]
+            ts = self.tgt_s(state)                               # [B,28] -> [B,d]
+        z_from_v = self.fuse(ctx, self._mask(block_state=True, device=patch.device))   # state hidden  [B,d]
+        z_from_s = self.fuse(ctx, self._mask(block_state=False, device=patch.device))  # vision hidden [B,d]
+        # predictions [B,d] vs targets [B,d] -> MSE -> scalar
         inv = (self.pred_s(z_from_v) - ts).square().mean() + (self.pred_v(z_from_s) - tv).square().mean()
-        ev = self.proj_v(patch).mean(1)
-        es = self.proj_s(state)
-        z_full = self.fuse(ctx)                                  # both modalities visible
-        sig = self.sigreg(ev) + self.sigreg(es) + self.sigreg(z_full)  # per-modal + joint SIGReg
-        loss = inv + self.lamb * sig
+        ev = self.proj_v(patch).mean(1)                          # online vision emb, pooled [B,d]
+        es = self.proj_s(state)                                  # online state emb [B,d]
+        z_full = self.fuse(ctx)                                  # both modalities visible [B,d]
+        sig = self.sigreg(ev) + self.sigreg(es) + self.sigreg(z_full)  # per-modal + joint SIGReg, scalar
+        loss = inv + self.lamb * sig                             # scalar
         return {"loss": loss, "inv": inv.detach(), "sig": sig.detach(),
                 "z": z_full.detach(), "ev": ev.detach(), "es": es.detach()}
 
     @torch.no_grad()
     def embed(self, patch, state):
-        return self.fuse(self._context(patch, state))           # fused latent [B,d]
+        # patch: [B, 196, 768]; state: [B, 28] -> fused latent [B, d]
+        return self.fuse(self._context(patch, state))
