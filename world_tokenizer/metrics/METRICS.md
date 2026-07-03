@@ -10,13 +10,17 @@ geometry directly, with the encoder frozen and no predictor in the loop.
 
 Planned suite (all in `metrics.py`):
 
-| metric | what it measures | status |
+All computations are implemented in `metrics.py` (data-agnostic: they take precomputed latent
+arrays; frame/pair/triplet *selection* is the open TODO below). Smoke test:
+`python -m world_tokenizer.metrics.metrics`.
+
+| metric | what it measures | notes |
 |---|---|---|
-| triplet accuracy | latent geometry: invariant to nuisance, sensitive to world state | computation done; triplet *selection* TODO below |
-| effective rank / RankMe | collapse (the predictor-R² blind spot) | TODO — `eval_lejepa.py` already has a RankMe; migrate |
-| linear probe R² to robot state | information content (Stage-2 gate already does a version) | TODO |
-| latent-vs-state distance correlation | continuous geometry (Spearman over frame pairs) | TODO |
-| alignment & uniformity (Wang & Isola 2020) | invariance and spread as two separate numbers | TODO |
+| `triplet_accuracy` | latent geometry: invariant to nuisance, sensitive to world state | per-tier acc + bootstrap CI + margins |
+| `effective_rank` | collapse (the predictor-R² blind spot) | RankMe, same formula as `eval_lejepa.py` / stable_pretraining |
+| `linear_probe_r2` | information content (Stage-2 gate already does a version) | Ridge, group-held-out splits, mean±std over seeds |
+| `distance_correlation` | continuous geometry (Spearman: latent vs state distance over frame pairs) | caller preprocesses state and picks the pair population |
+| `alignment_uniformity` | invariance and spread as two separate numbers (Wang & Isola 2020) | on L2-normalized latents |
 
 Minimal headline trio: effective rank (collapse) + probe R² (information) + triplet accuracy
 (geometry).
