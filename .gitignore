@@ -216,3 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Vendored helper repos (cloned separately; kept on the NAS, not part of this repo)
+/rh20t_api/
+/stable-pretraining/
