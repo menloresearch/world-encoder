@@ -7,6 +7,24 @@ Context/state in [HANDOFF.md](HANDOFF.md); Stage-2 result in [EXPERIMENTS.md](EX
 - **By end of tomorrow:** `world-encoder` repo goes **public**.
 - **Over the weekend:** full training run of the **Vis+State encoder** on the **full RH20T** train set.
 
+## Scope of this run — the whole encoder EXCEPT the decoder (and except temporal, for now)
+**IN:** full RH20T · vision + state · robot-agnostic 16-dim state · frozen `e0` vision + Perceiver
+fusion · **single-timestep** · masked-latent-prediction(modality) + per-modal SIGReg + joint SIGReg ·
+sharded data pipeline · fixed train/test split · eval · PCA/embedding viz · repo cleanup for public.
+
+**OUT (later stages, deliberately not in this run):**
+| excluded | when |
+|---|---|
+| Decoder (PixNeRD → latent diffusion) | Stage 3 / 6 |
+| Temporal / continuous-time embedding (mTAN-style) — the ×time half of loss #1 | **Stage 5** — unvalidated; don't ride it on the first public run |
+| Audio | later (Jia Qi: skip for now) |
+| Loss #4 action-conditioned forward prediction | Stage 5+ (needs temporal) |
+| Discrete latent / disentanglement | later |
+
+Rationale: this run is the **safe scale-up of the validated Stage-2 recipe** (frozen vision +
+Perceiver, modality fusion, single-timestep). Everything unvalidated (temporal, action, decoder) is
+held to its own stage so the first big public run rests only on what we've already shown works.
+
 ## Locked decisions
 - **Modalities:** vision + robot_state only. **Skip audio** for now.
 - **Encoder:** frozen `e0` vision (patch tokens) + **Perceiver fusion** (`MMPerceiver`), **single
