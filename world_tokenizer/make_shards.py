@@ -12,8 +12,8 @@ from multiprocessing import Pool
 
 import webdataset as wds
 
-DEF_FRAMES = "/mnt/nas/data/RH20T/cfg3_frames"
-DEF_OUT = "/mnt/nas/data/RH20T/cfg3_shards"
+DEF_FRAMES = "/mnt/nas/data/RH20T/frames/cfg3"
+DEF_OUT = "/mnt/nas/data/RH20T/shards/cfg3"
 
 
 def _shard_chunk(wid, paths, outdir, maxcount):

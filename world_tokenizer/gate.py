@@ -18,25 +18,30 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 from PIL import Image, ImageDraw  # noqa: E402
 
+import rh20t_api  # noqa: E402
 from rh20t_api.configurations import load_conf  # noqa: E402
 from rh20t_api.scene import RH20TScene  # noqa: E402
 
-RAW = "/mnt/nas/data/RH20T/cfg3_raw/RH20T_cfg3"
-FRAMES = "/mnt/nas/data/RH20T/cfg3_frames"
-CONF = os.path.join(os.environ["WAE_ROOT"], "deps/rh20t_api/configs/configs.json")
+RAW = "/mnt/nas/data/RH20T/raw/RH20T_cfg3"
+FRAMES = "/mnt/nas/data/RH20T/frames/cfg3"
+# configs.json ships at the root of the rh20t_api repo, next to the package dir
+CONF = os.path.join(os.path.dirname(os.path.dirname(rh20t_api.__file__)), "configs", "configs.json")
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--scene", default="task_0001_user_0016_scene_0001_cfg_0003")
     ap.add_argument("--cam", default=None, help="camera serial; default = the one with most frames")
-    ap.add_argument("--out", default=os.environ["WAE_ROOT"])
+    ap.add_argument("--raw-root", default=RAW, help="dir of raw RH20T_cfg* scene folders")
+    ap.add_argument("--frames-root", default=FRAMES, help="extract_frames output dir")
+    ap.add_argument("--conf", default=CONF, help="rh20t_api configs.json")
+    ap.add_argument("--out", default=os.environ.get("WAE_ROOT", "."))
     args = ap.parse_args()
 
-    confs = load_conf(CONF)
-    scene = RH20TScene(os.path.join(RAW, args.scene), confs)
+    confs = load_conf(args.conf)
+    scene = RH20TScene(os.path.join(args.raw_root, args.scene), confs)
 
-    fdir = os.path.join(FRAMES, args.scene)
+    fdir = os.path.join(args.frames_root, args.scene)
     cams = {os.path.basename(c).replace("cam_", ""): c for c in glob.glob(os.path.join(fdir, "cam_*"))}
     cam = args.cam or max(cams, key=lambda c: len(os.listdir(os.path.join(cams[c], "color"))))
     cdir = os.path.join(cams[cam], "color")

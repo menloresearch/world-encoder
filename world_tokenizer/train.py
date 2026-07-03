@@ -2,7 +2,7 @@
 
 Map-style (debug): python -m world_tokenizer.train --frames-root <dir> --epochs 3 --n-local 0 --max-steps 30
 WebDataset (full): CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7 python -m torch.distributed.run \
-                       --nproc_per_node=7 -m world_tokenizer.train --shards /mnt/nas/data/RH20T/cfg3_shards --epochs 30
+                       --nproc_per_node=7 -m world_tokenizer.train --shards /mnt/nas/data/RH20T/shards/cfg3 --epochs 30
 
 Use the venv `python -m torch.distributed.run` (the torchrun binary is base-env). GPU 0 is
 busy -> pin 1..7. BF16, no GradScaler. LR 2e-4, AdamW, backbone NOT frozen.
@@ -79,7 +79,7 @@ def main():
     ap.add_argument("--steps-per-epoch", type=int, default=0, help="WDS: 0=auto from count.txt")
     ap.add_argument("--max-steps", type=int, default=0, help="hard cap on total steps (smoke)")
     ap.add_argument("--log-every", type=int, default=50)
-    ap.add_argument("--out", default="/mnt/nas/data/RH20T/phase1_ckpt.pt")
+    ap.add_argument("--out", default="/mnt/nas/data/RH20T/checkpoints/phase1_ckpt.pt")
     args = ap.parse_args()
 
     is_dist, rank, world, local_rank = _dist_init()

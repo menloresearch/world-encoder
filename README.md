@@ -15,6 +15,7 @@ downstream models (VLAs, world models) can reuse one shared encoder instead of a
 - Stage 7 — real Microfactory data, same recipe.
 
 Per-stage run notes and results: [`EXPERIMENTS.md`](EXPERIMENTS.md).
+Setup (deps, `rh20t_api`, data paths) and run order: [`world_tokenizer/README.md`](world_tokenizer/README.md).
 
 ## Architecture
 

@@ -17,8 +17,8 @@ from multiprocessing import Pool
 
 from rh20t_api.extract import convert_dir
 
-DEF_RAW = "/mnt/nas/data/RH20T/cfg3_raw/RH20T_cfg3"
-DEF_DEST = "/mnt/nas/data/RH20T/cfg3_frames"
+DEF_RAW = "/mnt/nas/data/RH20T/raw/RH20T_cfg3"
+DEF_DEST = "/mnt/nas/data/RH20T/frames/cfg3"
 
 
 def _is_scene(name, include_human=False):

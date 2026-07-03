@@ -23,7 +23,7 @@ from world_tokenizer.model import LeJEPAVideo
 from world_tokenizer.probe_curve import FRAMES, embed
 from world_tokenizer.state import FT_DIMS, SceneState
 
-RAW = "/mnt/nas/data/RH20T/cfg3_raw/RH20T_cfg3"
+RAW = "/mnt/nas/data/RH20T/raw/RH20T_cfg3"
 # named slices of the 22-dim kinematic state (after removing F/T dims 21-26)
 GROUPS = {"joints(sincos)": slice(0, 12), "tcp_pos": slice(12, 15),
           "quat6d": slice(15, 21), "gripper": slice(21, 22)}
