@@ -28,6 +28,7 @@ CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7 python -m torch.distributed.run --nproc_per_n
 python -m world_tokenizer.eval_lejepa      --ckpts e0 e3 e6 e10   # linear + kNN + RankMe (task-id)
 python -m world_tokenizer.contact_probe    --ckpts e0 e6          # contact from F/T (unsaturated)
 python -m world_tokenizer.robust_robot_eval --ckpts e0: e6:<path> --seeds 5  # +force-R2, error bars
+#    encoder-only metrics (no predictor): metrics/metrics.py — design notes in metrics/METRICS.md
 ```
 
 ## Pre-flight facts baked into the code
