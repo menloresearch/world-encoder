@@ -91,10 +91,42 @@ The current state pipeline hardcodes cfg3's UR5 shape and breaks on 5 of 7 cfgs:
 - `world_tokenizer/train_perceiver.py` constructs `MMPerceiver()` without `state_dim`,
   so the model expects 28 regardless of the cache.
 
-Open design decisions before the full run (not yet implemented):
-1. **Joint unification** — slice positions per DOF and pad 6-DOF robots to 7
-   (STATE_DIM 28→30), vs also keeping velocities (zeros for UR5), vs truncating to 6.
-2. **Robot identity** — purely physical state vs appending a cfg/robot one-hot.
-3. **Cache layout** — one npz per cfg on the NAS (resumable, concat at train time)
-   vs a single combined cache (~58 GB at 15 frames/scene, fp16).
-4. **Frame budget** — 15 frames/scene ≈ 192k samples (matches the cfg3 POC density).
+These are resolved by the chunked pipeline below (`chunk_state.py` →
+`preprocessing/precompute_chunks.py` → `dataloader.py`); the legacy 28-dim path
+(`state.py:SceneState`, `precompute_patch.py`) remains cfg3/4-only.
+
+## Timing model: ticks, rates, and gaps (verified by probes)
+
+- The four 10 Hz streams (`joint`, `gripper`, `force_torque_base`, `tcp_base`) are
+  **camera-aligned**: per serial, their timestamps are *identical* to the camera color
+  timestamps. The shipped data is NOT at native sensor rate (the paper's table
+  describes the raw logs).
+- The tick rate is nominally 10 Hz but really **6.7–14.7 Hz, varying by cfg and by
+  scene** (cfg3/4 ≈ 7 Hz, cfg2/5 ≈ 14 Hz, cfg6 spans 10.1–14.5 Hz across scenes),
+  with jitter within scenes.
+- `high_freq_data.npy` (wrist F/T + TCP only, under the `"base"` key) is **100 Hz for
+  cfg1 but 125 Hz for cfg2/3/4/6/7**. It is missing for essentially all of cfg5
+  (file absent in 1298/1321 scenes, empty otherwise — no physical F/T sensor) and
+  empty for ~⅓ of cfg3 scenes.
+- Some scenes contain **multi-minute recording gaps** in their timestamps (e.g. 84 s
+  in a cfg2 scene, 5 min total in a cfg5 scene) — split into contiguous segments at
+  gaps > 500 ms before chunking.
+
+## Stage-2 chunk packet (chunk_state.py / precompute_chunks.py / dataloader.py)
+
+Chunks are **tick-anchored** (chunk k = k-th tick of a contiguous segment; native
+samples only, no interpolation). `dataloader.py` yields dict batches:
+
+| key | shape | contents |
+|-----|-------|----------|
+| `rgb` | [B, 1, 196, 768] | frozen ViT-B/16 patch tokens of the chunk's frame |
+| `motor` | [B, 1, 8, 3] | rows 0-6 joints, row 7 gripper width; C = [sin q, cos q, symlog dq]; gripper row ch0 = symlog width. No torque channel (KUKA-only → dropped) |
+| `motor_mask` | [B, 8, 3] | UR5: row 6 + vel channel masked (23.4% of data); gripper row ch0 only |
+| `ee` | [B, 13, 15] | high-freq samples in [tick k, tick k+1): [symlog F/T (6), symlog tcp xyz (3), tcp 6D rot (6)], zero-padded to T=13 |
+| `ee_mask` | [B, 13] | all-False for cfg5 + hf-empty cfg3 scenes (~12.4% of data) |
+| `robot_id` | [B] | 0=flexiv(cfg1/2) 1=ur5(cfg3/4) 2=franka(cfg5) 3=kuka(cfg6/7) |
+| `cfg`, `scene_idx` | [B] | scene-held-out splits via `dataset.scenes` lookup |
+
+Caches: `caches/cfg<N>.npz` on the NAS, written by
+`preprocessing/precompute_chunks.py` (`--chunks-per-scene`, resumable per cfg);
+loaded/concatenated by `world_tokenizer.dataloader.make_loader`.
