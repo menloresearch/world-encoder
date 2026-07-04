@@ -197,7 +197,7 @@ async function loadStateCharts() {
   const tSec = res.t.map((t) => (t - t0) / 1000);
   for (const g of res.groups) {
     const chart = lineChart(
-      { title: g.title, x_label: "t (s)", x: tSec, series: g.series },
+      { title: g.title, x_label: "t (s)", x: tSec, series: g.series, y_domain: g.y_domain },
       {
         height: 190,
         cursor: true,
@@ -330,7 +330,8 @@ function fmtNum(v) {
   return v.toPrecision(3);
 }
 
-// clean tick values covering [min, max]
+// clean tick values covering [min, max]; first tick <= min and last tick >= max,
+// so data plotted against [ticks[0], ticks[last]] can never leave the plot area
 function niceTicks(min, max, n = 5) {
   if (min === max) { min -= 1; max += 1; }
   const span = max - min;
@@ -338,8 +339,9 @@ function niceTicks(min, max, n = 5) {
   const mag = Math.pow(10, Math.floor(Math.log10(step0)));
   const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => span / s <= n) || 10 * mag;
   const lo = Math.floor(min / step) * step;
+  const hi = Math.ceil(max / step) * step;
   const ticks = [];
-  for (let v = lo; v <= max + step * 1e-9; v += step) ticks.push(+v.toFixed(10));
+  for (let v = lo; v <= hi + step * 1e-9; v += step) ticks.push(+v.toFixed(10));
   return ticks;
 }
 
@@ -406,8 +408,12 @@ function lineChart(spec, opts = {}) {
 
   const W = 720, H = opts.height || 280, m = { l: 52, r: 20, t: 12, b: 34 };
   const iw = W - m.l - m.r, ih = H - m.t - m.b;
+  // y range: a fixed domain if the signal is bounded by construction, else min/max
+  // across ALL series in the chart (a single shared scale — nothing may clip)
   const allY = names.flatMap((n) => spec.series[n]).filter((v) => v != null);
-  const yTicks = niceTicks(Math.min(...allY), Math.max(...allY));
+  const yLo = spec.y_domain ? Math.min(spec.y_domain[0], ...allY) : Math.min(...allY);
+  const yHi = spec.y_domain ? Math.max(spec.y_domain[1], ...allY) : Math.max(...allY);
+  const yTicks = niceTicks(yLo, yHi);
   const y0 = yTicks[0], y1 = yTicks[yTicks.length - 1];
   const x0 = Math.min(...x), x1 = Math.max(...x);
   const px = (v) => m.l + (x1 === x0 ? iw / 2 : ((v - x0) / (x1 - x0)) * iw);

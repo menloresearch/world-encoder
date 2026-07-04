@@ -41,14 +41,16 @@ def safe_parts(*parts):
     return all(SAFE_COMPONENT.match(p) and p not in (".", "..") for p in parts)
 
 
-# the 28-dim SceneState.state() vector, sliced into named signal groups
+# the 28-dim SceneState.state() vector, sliced into named signal groups.
+# y_domain fixes the axis for signals bounded by construction (sin/cos, rotation-matrix
+# entries), so the scale never depends on the data shown; None = fit to the data.
 STATE_GROUPS = [
-    ("joints — sin", 0, ["j1", "j2", "j3", "j4", "j5", "j6"]),
-    ("joints — cos", 6, ["j1", "j2", "j3", "j4", "j5", "j6"]),
-    ("tcp position (symlog)", 12, ["x", "y", "z"]),
-    ("tcp rotation (6D)", 15, ["r1", "r2", "r3", "r4", "r5", "r6"]),
-    ("force/torque zeroed (symlog)", 21, ["Fx", "Fy", "Fz", "Tx", "Ty", "Tz"]),
-    ("gripper width (symlog)", 27, ["width"]),
+    ("joints — sin", 0, ["j1", "j2", "j3", "j4", "j5", "j6"], (-1, 1)),
+    ("joints — cos", 6, ["j1", "j2", "j3", "j4", "j5", "j6"], (-1, 1)),
+    ("tcp position (symlog)", 12, ["x", "y", "z"], None),
+    ("tcp rotation (6D)", 15, ["r1", "r2", "r3", "r4", "r5", "r6"], (-1, 1)),
+    ("force/torque zeroed (symlog)", 21, ["Fx", "Fy", "Fz", "Tx", "Ty", "Tz"], None),
+    ("gripper width (symlog)", 27, ["width"], None),
 ]
 
 _scene_state_cache = {}  # (cfg, scene) -> SceneState, capped small
@@ -214,12 +216,15 @@ class Handler(BaseHTTPRequestHandler):
         import numpy as np
         vecs = np.stack([st.state(t) for t in ts]).astype(float)  # (N, 28)
         groups = []
-        for title, start, names in STATE_GROUPS:
+        for title, start, names, y_domain in STATE_GROUPS:
             series = {}
             for k, name in enumerate(names):
                 col = vecs[:, start + k]
                 series[name] = [v if math.isfinite(v) else None for v in col.tolist()]
-            groups.append({"title": title, "series": series})
+            g = {"title": title, "series": series}
+            if y_domain:
+                g["y_domain"] = list(y_domain)
+            groups.append(g)
         return {"serial": st.serial, "t": ts, "groups": groups}
 
     def frame_file(self, rel):
