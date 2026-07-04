@@ -13,6 +13,10 @@
   --series-2:    #1baf7a;
   --series-3:    #eda100;
   --series-4:    #008300;
+  --series-5:    #4a3aa7;
+  --series-6:    #e34948;
+  --series-7:    #e87ba4;
+  --series-8:    #eb6834;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -29,6 +33,10 @@
     --series-2:  #199e70;
     --series-3:  #c98500;
     --series-4:  #008300;
+    --series-5:  #9085e9;
+    --series-6:  #e66767;
+    --series-7:  #d55181;
+    --series-8:  #d95926;
   }
 }
 
@@ -165,6 +173,16 @@ select {
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 3px 6px;
+}
+
+.state-section { margin-top: 22px; }
+.state-section h2 { font-size: 15px; font-weight: 600; margin: 0 0 4px; }
+.state-section .chart-block {
+  background: var(--surface);
+  border: 1px solid var(--grid);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-top: 12px;
 }
 
 /* ---- metrics ---- */

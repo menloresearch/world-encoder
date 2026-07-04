@@ -23,6 +23,14 @@ cfg → scene (searchable, 800 in cfg3) → camera. Frames play back at recorded
 (0.5–4× speed), with a scrubber and arrow-key stepping. Frames are served with immutable
 cache headers, so scrubbing back is instant.
 
+Below the player, the **robot state** is plotted exactly as the dataloader sees it: the
+server imports `world_tokenizer.state.SceneState` (so preprocessing can never drift from
+training) and evaluates the 28-dim vector at the selected camera's frame timestamps —
+joints→sin/cos, tcp pos→symlog, quat→6D, F/T zeroed→symlog, gripper width→symlog. A
+playhead tracks video playback and clicking any chart seeks the video. Needs numpy+scipy
+on the server's python and raw scenes under `--raw-root` (default `<data-root>/raw`,
+accepting either `raw/cfg3/...` or `raw/RH20T_cfg3/...`).
+
 ## Metrics tab
 
 Renders every `*.json` in `--metrics-dir` (default `visualizer/metrics/`), one card per

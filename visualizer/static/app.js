@@ -1,7 +1,8 @@
 "use strict";
 
 const $ = (sel) => document.querySelector(sel);
-const SERIES_VARS = ["--series-1", "--series-2", "--series-3", "--series-4"];
+const SERIES_VARS = ["--series-1", "--series-2", "--series-3", "--series-4",
+                     "--series-5", "--series-6", "--series-7", "--series-8"];
 const seriesColor = (i) => `var(${SERIES_VARS[i % SERIES_VARS.length]})`;
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -60,6 +61,8 @@ const state = {
   idx: 0,
   playing: false,
   playTimer: null,
+  stateCharts: [],   // playhead-enabled charts under the player
+  stateReq: 0,       // guards against stale /api/state responses
 };
 
 function frameURL(t) {
@@ -161,6 +164,56 @@ async function selectCam(cam, stream, pill) {
   scrub.max = Math.max(0, state.timestamps.length - 1);
   scrub.value = 0;
   showFrame(0);
+  loadStateCharts();
+}
+
+async function loadStateCharts() {
+  const req = ++state.stateReq;
+  const section = $("#state-section");
+  const body = $("#state-body");
+  state.stateCharts = [];
+  body.textContent = "";
+  section.hidden = false;
+  body.append(el("p", "muted", "Loading robot state…"));
+  let res;
+  try {
+    res = await getJSON(
+      `/api/state?cfg=${encodeURIComponent(state.cfg)}&scene=${encodeURIComponent(state.scene)}` +
+      `&cam=${encodeURIComponent(state.cam)}&stream=${encodeURIComponent(state.stream)}`);
+  } catch (err) {
+    res = { error: err.message };
+  }
+  if (req !== state.stateReq) return; // user already switched scene/camera
+  body.textContent = "";
+  if (res.error) {
+    body.append(el("p", "muted", `Robot state unavailable for this scene: ${res.error}`));
+    return;
+  }
+  if (!res.t || !res.t.length) {
+    body.append(el("p", "muted", "No state samples for this camera."));
+    return;
+  }
+  const t0 = res.t[0];
+  const tSec = res.t.map((t) => (t - t0) / 1000);
+  for (const g of res.groups) {
+    const chart = lineChart(
+      { title: g.title, x_label: "t (s)", x: tSec, series: g.series },
+      {
+        height: 190,
+        cursor: true,
+        onSeek: (_, i) => { stopPlayback(); showFrame(i); },
+      });
+    state.stateCharts.push(chart);
+    body.append(chart);
+  }
+  syncStateCursor();
+}
+
+function syncStateCursor() {
+  const ts = state.timestamps;
+  if (!ts.length) return;
+  const tSec = (ts[state.idx] - ts[0]) / 1000;
+  for (const c of state.stateCharts) c.setCursor && c.setCursor(tSec);
 }
 
 function showFrame(i) {
@@ -173,6 +226,7 @@ function showFrame(i) {
   const rel = ((ts[state.idx] - t0) / 1000).toFixed(2);
   $("#frame-label").textContent =
     `frame ${state.idx + 1}/${ts.length} · t=${rel}s`;
+  syncStateCursor();
   // warm the cache a few frames ahead so playback doesn't stutter
   for (let k = 1; k <= 4 && state.idx + k < ts.length; k++) {
     new Image().src = frameURL(ts[state.idx + k]);
@@ -327,8 +381,9 @@ function dataTable(columns, rows) {
   return det;
 }
 
-/* spec: {title, x_label?, y_label?, x: [..], series: {name: [..], ...}} */
-function lineChart(spec) {
+/* spec: {title, x_label?, y_label?, x: [..], series: {name: [..], ...}}
+   opts: {height?, cursor?: bool -> block.setCursor(x), onSeek?: (xValue, index) => void} */
+function lineChart(spec, opts = {}) {
   const block = chartBlock(spec.title);
   const names = Object.keys(spec.series || {});
   const x = spec.x || [];
@@ -349,7 +404,7 @@ function lineChart(spec) {
     block.append(legend);
   }
 
-  const W = 720, H = 280, m = { l: 52, r: 20, t: 12, b: 34 };
+  const W = 720, H = opts.height || 280, m = { l: 52, r: 20, t: 12, b: 34 };
   const iw = W - m.l - m.r, ih = H - m.t - m.b;
   const allY = names.flatMap((n) => spec.series[n]).filter((v) => v != null);
   const yTicks = niceTicks(Math.min(...allY), Math.max(...allY));
@@ -413,6 +468,29 @@ function lineChart(spec) {
     }
   });
 
+  // playhead: a cursor line the caller positions via block.setCursor(xValue)
+  if (opts.cursor) {
+    const head = svgEl("line", {
+      y1: m.t, y2: m.t + ih, x1: 0, x2: 0, visibility: "hidden",
+      style: "stroke: var(--ink-2); stroke-width: 1.5",
+    });
+    svg.append(head);
+    block.setCursor = (xv) => {
+      if (xv == null) { head.setAttribute("visibility", "hidden"); return; }
+      head.setAttribute("x1", px(xv));
+      head.setAttribute("x2", px(xv));
+      head.setAttribute("visibility", "visible");
+    };
+  }
+
+  const nearestIdx = (clientX) => {
+    const r = svg.getBoundingClientRect();
+    const mx = ((clientX - r.left) / r.width) * W;
+    let best = 0;
+    x.forEach((xv, k) => { if (Math.abs(px(xv) - mx) < Math.abs(px(x[best]) - mx)) best = k; });
+    return best;
+  };
+
   // crosshair + all-series tooltip: snap the pointer to the nearest x position
   const cross = svgEl("line", {
     y1: m.t, y2: m.t + ih, x1: 0, x2: 0, visibility: "hidden",
@@ -422,11 +500,15 @@ function lineChart(spec) {
   const hit = svgEl("rect", {
     x: m.l, y: m.t, width: iw, height: ih, fill: "transparent",
   });
+  if (opts.onSeek) {
+    hit.style.cursor = "pointer";
+    hit.addEventListener("click", (e) => {
+      const best = nearestIdx(e.clientX);
+      opts.onSeek(x[best], best);
+    });
+  }
   hit.addEventListener("pointermove", (e) => {
-    const r = svg.getBoundingClientRect();
-    const mx = ((e.clientX - r.left) / r.width) * W;
-    let best = 0;
-    x.forEach((xv, k) => { if (Math.abs(px(xv) - mx) < Math.abs(px(x[best]) - mx)) best = k; });
+    const best = nearestIdx(e.clientX);
     cross.setAttribute("x1", px(x[best]));
     cross.setAttribute("x2", px(x[best]));
     cross.setAttribute("visibility", "visible");

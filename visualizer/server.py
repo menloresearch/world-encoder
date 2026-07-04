@@ -11,14 +11,17 @@ Stdlib only — no pip installs. Run:
 """
 import argparse
 import json
+import math
 import os
 import re
 import sys
+import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 SAFE_COMPONENT = re.compile(r"^[A-Za-z0-9_.-]+$")
 CONTENT_TYPES = {
@@ -38,12 +41,27 @@ def safe_parts(*parts):
     return all(SAFE_COMPONENT.match(p) and p not in (".", "..") for p in parts)
 
 
+# the 28-dim SceneState.state() vector, sliced into named signal groups
+STATE_GROUPS = [
+    ("joints — sin", 0, ["j1", "j2", "j3", "j4", "j5", "j6"]),
+    ("joints — cos", 6, ["j1", "j2", "j3", "j4", "j5", "j6"]),
+    ("tcp position (symlog)", 12, ["x", "y", "z"]),
+    ("tcp rotation (6D)", 15, ["r1", "r2", "r3", "r4", "r5", "r6"]),
+    ("force/torque zeroed (symlog)", 21, ["Fx", "Fy", "Fz", "Tx", "Ty", "Tz"]),
+    ("gripper width (symlog)", 27, ["width"]),
+]
+
+_scene_state_cache = {}  # (cfg, scene) -> SceneState, capped small
+_scene_state_lock = threading.Lock()
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "wae-visualizer/1.0"
 
     # set by serve() on the class
     frames_root: Path = None
     metrics_dir: Path = None
+    raw_root: Path = None
 
     def log_message(self, fmt, *args):  # quieter default log
         sys.stderr.write("%s %s\n" % (self.address_string(), fmt % args))
@@ -86,6 +104,9 @@ class Handler(BaseHTTPRequestHandler):
             if route == "/api/frames":
                 return self._json(self.api_frames(qs.get("cfg", ""), qs.get("scene", ""),
                                                   qs.get("cam", ""), qs.get("stream", "color")))
+            if route == "/api/state":
+                return self._json(self.api_state(qs.get("cfg", ""), qs.get("scene", ""),
+                                                 qs.get("cam", ""), qs.get("stream", "color")))
             if route == "/api/metrics":
                 return self._json(self.api_metrics())
             if route.startswith("/frames/"):
@@ -159,6 +180,48 @@ class Handler(BaseHTTPRequestHandler):
         ts = sorted(int(f.stem) for f in d.iterdir() if f.suffix == ".jpg" and f.stem.isdigit())
         return {"timestamps": ts}
 
+    def _scene_state(self, cfg, scene):
+        """SceneState for a scene, via the training code (world_tokenizer.state)."""
+        key = (cfg, scene)
+        with _scene_state_lock:
+            if key in _scene_state_cache:
+                return _scene_state_cache[key]
+        if str(REPO_ROOT) not in sys.path:
+            sys.path.insert(0, str(REPO_ROOT))
+        from world_tokenizer.state import SceneState  # needs numpy + scipy
+        # frames use "cfg3", raw uses "RH20T_cfg3" — accept either layout
+        for cand in (self.raw_root / cfg / scene, self.raw_root / f"RH20T_{cfg}" / scene):
+            if cand.is_dir():
+                st = SceneState(str(cand))
+                with _scene_state_lock:
+                    if len(_scene_state_cache) >= 4:
+                        _scene_state_cache.pop(next(iter(_scene_state_cache)))
+                    _scene_state_cache[key] = st
+                return st
+        raise FileNotFoundError(f"no raw scene dir for {scene} under {self.raw_root}")
+
+    def api_state(self, cfg, scene, cam, stream):
+        """The dataloader's 28-dim state vector, evaluated at this camera's frame times."""
+        ts = self.api_frames(cfg, scene, cam, stream)["timestamps"]
+        if not ts:
+            return {"t": [], "groups": []}
+        try:
+            st = self._scene_state(cfg, scene)
+        except ImportError as e:
+            return {"error": f"state preprocessing needs numpy+scipy on this python: {e}"}
+        except FileNotFoundError as e:
+            return {"error": str(e)}
+        import numpy as np
+        vecs = np.stack([st.state(t) for t in ts]).astype(float)  # (N, 28)
+        groups = []
+        for title, start, names in STATE_GROUPS:
+            series = {}
+            for k, name in enumerate(names):
+                col = vecs[:, start + k]
+                series[name] = [v if math.isfinite(v) else None for v in col.tolist()]
+            groups.append({"title": title, "series": series})
+        return {"serial": st.serial, "t": ts, "groups": groups}
+
     def frame_file(self, rel):
         # /frames/<cfg>/<scene>/<cam>/<stream>/<ts>.jpg
         parts = [p for p in rel.split("/") if p]
@@ -189,6 +252,8 @@ def main():
                     help="RH20T data root (frames live under <data-root>/frames)")
     ap.add_argument("--frames-root", default=None,
                     help="override the frames dir directly (default <data-root>/frames)")
+    ap.add_argument("--raw-root", default=None,
+                    help="raw scene dirs with transformed/*.npy (default <data-root>/raw)")
     ap.add_argument("--metrics-dir", default=str(Path(__file__).resolve().parent / "metrics"),
                     help="directory of metrics *.json files")
     ap.add_argument("--host", default="127.0.0.1")
@@ -196,6 +261,7 @@ def main():
     args = ap.parse_args()
 
     Handler.frames_root = Path(args.frames_root or Path(args.data_root) / "frames")
+    Handler.raw_root = Path(args.raw_root or Path(args.data_root) / "raw")
     Handler.metrics_dir = Path(args.metrics_dir)
     if not Handler.frames_root.is_dir():
         print(f"warning: frames root {Handler.frames_root} does not exist "
