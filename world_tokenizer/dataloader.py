@@ -14,18 +14,23 @@ Loads per-cfg caches written by preprocessing/precompute_chunks.py and serves:
 
 Train/test split is HELD-OUT BY GROUP (cfg, task, user), stratified per cfg: the same
 user repeating the same task up to 10x produces near-duplicate scenes, so scenes are
-not independent — all repetitions land on one side of the split. Metrics
-(metrics/METRICS.md) are computed on the test loader later; triplet negatives must be
-drawn from test groups only.
+not independent — all repetitions land on one side of the split. The assignment is
+FROZEN in splits/holdout_v1.csv (generated once by preprocessing/make_split.py from
+the raw scene listing, committed) so the split is replicable regardless of which
+chunks were cached. Metrics (metrics/METRICS.md) are computed on the test loader
+later; triplet negatives must be drawn from test groups only.
 
     train, test, ds = make_loader("/mnt/nas/data/RH20T/caches", cfgs=[1,2,3,4,5,6,7])
 """
+import csv
 import os
 import re
 
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset, Subset
+
+SPLIT_CSV = os.path.join(os.path.dirname(__file__), "..", "splits", "holdout_v1.csv")
 
 
 def scene_group(scene_name):
@@ -72,27 +77,25 @@ class ChunkDataset(Dataset):
         }
 
 
-def split_groups(groups, holdout_frac=0.3, seed=0):
-    """Test group names, stratified per cfg (each cfg holds out ~holdout_frac of
-    its (task, user) groups). Group names end in _cfg_NNNN."""
-    rng = np.random.RandomState(seed)
-    test = set()
-    by_cfg = {}
-    for g in groups:
-        by_cfg.setdefault(g.rsplit("_cfg_", 1)[1], []).append(g)
-    for cfg_groups in by_cfg.values():
-        perm = rng.permutation(sorted(cfg_groups))
-        test.update(perm[:max(1, round(len(perm) * holdout_frac))].tolist())
-    return test
+def load_split(split_csv=SPLIT_CSV):
+    """{group_name: "train"|"test"} from the frozen split CSV."""
+    with open(split_csv, newline="") as f:
+        return {r["group"]: r["split"] for r in csv.DictReader(f)}
 
 
 def make_loader(cache_dir, cfgs=(1, 2, 3, 4, 5, 6, 7), batch=256,
-                holdout_frac=0.3, seed=0, num_workers=4):
-    """Group-held-out (cfg, task, user) train/test DataLoaders (+ the dataset)."""
+                split_csv=SPLIT_CSV, num_workers=4):
+    """Train/test DataLoaders (+ the dataset), split by the frozen group CSV.
+
+    Every group found in the caches must appear in the CSV — an unknown group is an
+    error (regenerate the CSV deliberately via preprocessing/make_split.py, don't
+    let new data silently land on either side)."""
     ds = ChunkDataset(cache_dir, cfgs)
-    test_groups = split_groups(ds.groups, holdout_frac, seed)
-    test_gidx = {i for i, g in enumerate(ds.groups) if g in test_groups}
-    is_test = np.isin(ds._group_idx, list(test_gidx))
+    split = load_split(split_csv)
+    unknown = [g for g in ds.groups if g not in split]
+    assert not unknown, f"{len(unknown)} groups missing from {split_csv}: {unknown[:5]}"
+    test_gidx = [i for i, g in enumerate(ds.groups) if split[g] == "test"]
+    is_test = np.isin(ds._group_idx, test_gidx)
     mk = lambda mask, shuf: DataLoader(Subset(ds, np.flatnonzero(mask).tolist()),
                                        batch_size=batch, shuffle=shuf,
                                        num_workers=num_workers, drop_last=shuf)

@@ -132,7 +132,10 @@ Caches: `caches/cfg<N>.npz` on the NAS, written by
 `preprocessing/precompute_chunks.py` (`--chunks-per-scene`, resumable per cfg);
 loaded/concatenated by `world_tokenizer.dataloader.make_loader`.
 
-**Train/test split: held out by (cfg, task, user) group, stratified per cfg.** The
+**Train/test split: held out by (cfg, task, user) group, stratified per cfg, FROZEN
+in `splits/holdout_v1.csv`** (committed; generated once by
+`preprocessing/make_split.py` from the raw scene listing, so it's independent of
+which chunks were cached — the dataloader errors on any group not in the CSV). The
 same user repeats the same task ~10× (`scene_0001…0010` — median exactly 10
 scenes/group, 12,776 scenes → 1,293 groups); those recordings are near-duplicates, so
 splitting per scene would leak ~9 training near-copies of every test scene. All of a
