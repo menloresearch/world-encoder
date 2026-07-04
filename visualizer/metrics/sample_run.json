@@ -1,0 +1,42 @@
+{
+  "run": "SAMPLE — Stage 2 Perceiver (cfg3)",
+  "note": "Example file demonstrating the metrics schema. Scalars and bars are the real Stage-2 numbers from EXPERIMENTS.md; the RankMe curve is illustrative (endpoints real, intermediate epochs interpolated). Delete this file once real runs write here.",
+  "scalars": {
+    "RankMe": 211,
+    "state R² (z_v)": 0.551,
+    "seeds": 5,
+    "eval frames": 24000
+  },
+  "charts": [
+    {
+      "title": "RankMe across finetune checkpoints (stages 0–1)",
+      "x_label": "epoch",
+      "y_label": "RankMe",
+      "x": [0, 3, 6, 10],
+      "series": {
+        "lr 2e-5": [300, 292, 288, 285],
+        "lr 2e-4 (collapsed)": [300, 230, 185, 158]
+      }
+    }
+  ],
+  "bars": [
+    {
+      "title": "Predict robot state from feature (R², scene-held-out, 5 seeds)",
+      "y_label": "R²",
+      "labels": ["Perceiver z_v (256)", "raw vision (768)", "PCA-256 control"],
+      "values": [0.551, 0.257, 0.134],
+      "errors": [0.018, 0.075, 0.047]
+    }
+  ],
+  "tables": [
+    {
+      "title": "Stage-2 outcome vs controls",
+      "columns": ["feature → predict robot state", "R²", "±"],
+      "rows": [
+        ["Perceiver z_v (256, cross-modal, state masked)", 0.551, 0.018],
+        ["raw vision (768, mean-pooled)", 0.257, 0.075],
+        ["PCA-256 of LeJEPA vision (compression control)", 0.134, 0.047]
+      ]
+    }
+  ]
+}
