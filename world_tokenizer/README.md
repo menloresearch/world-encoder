@@ -38,15 +38,15 @@ Steps 1+3 for every cfg in one go: `preprocessing/preprocess_all.sh` (env vars
 ```bash
 # 1. extract frames — mp4 -> timestamped jpgs, all robot scenes
 #    (--scene <name> for one; --include-human for human demos)
-python -m world_tokenizer.extract_frames --raw-root $RH20T/raw/RH20T_cfg3 \
+python -m preprocessing.extract_frames --raw-root $RH20T/raw/RH20T_cfg3 \
     --dest $RH20T/frames/cfg3 --all --num-workers 32
 
 # 2. data gate — F/T <-> video alignment on one scene (sanity, NOT training)
-python -m world_tokenizer.gate --scene task_0001_user_0016_scene_0001_cfg_0003 \
+python -m preprocessing.gate --scene task_0001_user_0016_scene_0001_cfg_0003 \
     --raw-root $RH20T/raw/RH20T_cfg3 --frames-root $RH20T/frames/cfg3 --out .
 
 # 3. pack frames into WebDataset shards (fast sequential NFS reads; writes count.txt)
-python -m world_tokenizer.make_shards --frames-root $RH20T/frames/cfg3 \
+python -m preprocessing.make_shards --frames-root $RH20T/frames/cfg3 \
     --out $RH20T/shards/cfg3 --num-workers 48
 
 # 4. train — DDP via the VENV python (`-m torch.distributed.run`; the `torchrun` binary is

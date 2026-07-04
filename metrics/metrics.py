@@ -7,7 +7,7 @@ Design discussion + the triplet-selection TODO live in METRICS.md next to this f
 All functions take precomputed latents as (N, D) numpy arrays (torch: .cpu().numpy() first);
 triplet *selection* is deliberately out of scope here.
 
-Smoke test:  python -m world_tokenizer.metrics.metrics
+Smoke test:  python -m metrics.metrics
 """
 import numpy as np
 from scipy.spatial.distance import pdist

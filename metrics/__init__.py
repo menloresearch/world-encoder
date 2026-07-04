@@ -1,4 +1,4 @@
-from world_tokenizer.metrics.metrics import (
+from metrics.metrics import (
     alignment_uniformity,
     distance_correlation,
     effective_rank,

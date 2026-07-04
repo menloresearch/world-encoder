@@ -20,7 +20,7 @@ OUT_ROOT="${OUT_ROOT:-/mnt/nas/data/RH20T}"
 CFGS="${CFGS:-1 2 3 4 5 6 7}"
 NUM_WORKERS="${NUM_WORKERS:-32}"
 
-cd "$(dirname "$0")/.."  # repo root, so `python -m world_tokenizer.*` resolves
+cd "$(dirname "$0")/.."  # repo root, so `python -m preprocessing.*` resolves
 
 # pick a python: $PYTHON if set, else the repo venv, else whatever's on PATH
 if [[ -n "${PYTHON:-}" ]]; then PY="$PYTHON"
@@ -56,12 +56,12 @@ for n in $CFGS; do
 
   echo "=== cfg${n}: extracting frames -> $frames ==="
   start=$SECONDS
-  "$PY" -m world_tokenizer.extract_frames --raw-root "$raw" --dest "$frames" \
+  "$PY" -m preprocessing.extract_frames --raw-root "$raw" --dest "$frames" \
       --all --num-workers "$NUM_WORKERS"
 
   echo "=== cfg${n}: packing shards -> $shards ==="
   rm -rf "$shards"  # no count.txt = absent or partial; rebuild from scratch
-  "$PY" -m world_tokenizer.make_shards --frames-root "$frames" --out "$shards" \
+  "$PY" -m preprocessing.make_shards --frames-root "$frames" --out "$shards" \
       --num-workers "$NUM_WORKERS"
 
   echo "=== cfg${n}: done in $(( (SECONDS - start) / 60 ))m ==="

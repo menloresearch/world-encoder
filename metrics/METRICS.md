@@ -12,7 +12,7 @@ Planned suite (all in `metrics.py`):
 
 All computations are implemented in `metrics.py` (data-agnostic: they take precomputed latent
 arrays; frame/pair/triplet *selection* is the open TODO below). Smoke test:
-`python -m world_tokenizer.metrics.metrics`.
+`python -m metrics.metrics`.
 
 | metric | what it measures | notes |
 |---|---|---|
