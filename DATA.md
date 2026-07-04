@@ -125,8 +125,19 @@ samples only, no interpolation). `dataloader.py` yields dict batches:
 | `ee` | [B, 13, 15] | high-freq samples in [tick k, tick k+1): [symlog F/T (6), symlog tcp xyz (3), tcp 6D rot (6)], zero-padded to T=13 |
 | `ee_mask` | [B, 13] | all-False for cfg5 + hf-empty cfg3 scenes (~12.4% of data) |
 | `robot_id` | [B] | 0=flexiv(cfg1/2) 1=ur5(cfg3/4) 2=franka(cfg5) 3=kuka(cfg6/7) |
-| `cfg`, `scene_idx` | [B] | scene-held-out splits via `dataset.scenes` lookup |
+| `cfg`, `scene_idx`, `group_idx` | [B] | lookups via `dataset.scenes` / `dataset.groups` |
+| `ts` | [B] | tick timestamp (ms) — for Δt-based triplet selection (metrics/METRICS.md) |
 
 Caches: `caches/cfg<N>.npz` on the NAS, written by
 `preprocessing/precompute_chunks.py` (`--chunks-per-scene`, resumable per cfg);
 loaded/concatenated by `world_tokenizer.dataloader.make_loader`.
+
+**Train/test split: held out by (cfg, task, user) group, stratified per cfg.** The
+same user repeats the same task ~10× (`scene_0001…0010` — median exactly 10
+scenes/group, 12,776 scenes → 1,293 groups); those recordings are near-duplicates, so
+splitting per scene would leak ~9 training near-copies of every test scene. All of a
+group's scenes land on one side; each cfg holds out ~30% of its groups (so tier-4
+"different config" triplet negatives exist for every robot). For the metrics suite
+(`metrics/METRICS.md`): compute on the test loader only, and draw triplet negatives
+from test groups only — train-scene negatives would mix encoder-seen material into
+the eval.

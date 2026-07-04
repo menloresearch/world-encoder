@@ -4,7 +4,7 @@ Supersedes world_tokenizer/precompute_patch.py for stage 2. For each cfg: sample
 --chunks-per-scene tick-anchored chunks per robot scene (see chunk_state.py), embed
 each chunk's frame with the frozen ViT-B/16, and write caches/cfg<N>.npz with:
   patch (N,196,768) fp16 | motor (N,1,8,3) | motor_mask (N,8,3) | ee (N,13,15)
-  | ee_mask (N,13) | robot_id (N) | cfg (N) | scene (N) str
+  | ee_mask (N,13) | robot_id (N) | cfg (N) | scene (N) str | ts (N) int64 tick ms
 Resumable per cfg (existing npz is skipped). Scenes missing state files are skipped;
 chunks whose frame jpg is missing are skipped.
 
@@ -52,7 +52,7 @@ def main():
         if args.max_scenes:
             scenes = scenes[:: max(1, len(scenes) // args.max_scenes)][:args.max_scenes]
 
-        paths, motors, masks, ees, ee_masks, names = [], [], [], [], [], []
+        paths, motors, masks, ees, ee_masks, names, ticks = [], [], [], [], [], [], []
         skipped = 0
         for si, s in enumerate(scenes, 1):
             try:
@@ -72,6 +72,7 @@ def main():
                 motor, mask, ee, ee_mask = sc.chunk(i)
                 paths.append(fp); motors.append(motor); masks.append(mask)
                 ees.append(ee); ee_masks.append(ee_mask); names.append(s)
+                ticks.append(int(sc.ticks[i]))
             if si % 200 == 0:
                 print(f"cfg{n}: [{si}/{len(scenes)}] {len(paths)} chunks", flush=True)
 
@@ -85,7 +86,7 @@ def main():
                  ee=np.stack(ees), ee_mask=np.stack(ee_masks),
                  robot_id=np.full(len(paths), ROBOT_OF_CFG[n], dtype=np.int64),
                  cfg=np.full(len(paths), n, dtype=np.int64),
-                 scene=np.array(names))
+                 scene=np.array(names), ts=np.array(ticks, dtype=np.int64))
         print(f"cfg{n}: SAVED {len(paths)} chunks -> {out}", flush=True)
 
 
