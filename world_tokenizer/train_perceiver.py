@@ -69,6 +69,8 @@ def run_seed(patch, state, kin, vmean, scene, seed, args, dev):
             ctx = net._context(P, S)
             zv.append(net.fuse(ctx, net._mask(block_state=True, device=dev)).cpu().numpy())
     zv = np.concatenate(zv)
+    if args.out_dir:
+        torch.save(net.state_dict(), f"{args.out_dir}/perceiver_seed{seed}.pt")
     pca = PCA(n_components=args.d).fit_transform(StandardScaler().fit_transform(vmean))
     return {"zv": probe(zv, kin, trm, tem), "raw": probe(vmean, kin, trm, tem),
             "pca": probe(pca, kin, trm, tem), "rankme_zv": rankme(zv[tem])}
@@ -83,6 +85,7 @@ def main():
     ap.add_argument("--d", type=int, default=256)
     ap.add_argument("--queries", type=int, default=8)
     ap.add_argument("--lr", type=float, default=1e-3)
+    ap.add_argument("--out-dir", default=None, help="save per-seed perceiver weights here")
     args = ap.parse_args()
     dev = "cuda" if torch.cuda.is_available() else "cpu"
 
