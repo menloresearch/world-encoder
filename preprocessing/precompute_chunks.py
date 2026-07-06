@@ -19,7 +19,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from world_tokenizer.chunk_state import ROBOT_OF_CFG, SceneChunks  # noqa: E402
+from world_tokenizer.chunk_state import IN_HAND_OF_CFG, ROBOT_OF_CFG, SceneChunks  # noqa: E402
 
 
 def main():
@@ -56,7 +56,7 @@ def main():
         skipped = 0
         for si, s in enumerate(scenes, 1):
             try:
-                sc = SceneChunks(os.path.join(raw, s))
+                sc = SceneChunks(os.path.join(raw, s), exclude=IN_HAND_OF_CFG.get(n, ()))
             except Exception:
                 skipped += 1
                 continue

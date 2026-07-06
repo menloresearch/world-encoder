@@ -33,16 +33,24 @@ ROBOT_NAMES = ["flexiv", "ur5", "franka", "kuka"]
 ROBOT_OF_CFG = {1: 0, 2: 0, 3: 1, 4: 1, 5: 2, 6: 3, 7: 3}
 # joint.npy vector length -> (dof, has velocity); KUKA's trailing torque is ignored
 _JOINT_LAYOUT = {6: (6, False), 14: (7, True), 21: (7, True)}
+# wrist ("in_hand") camera serials per cfg, from rh20t_api configs/configs.json.
+# The wrist view moves with the arm (image is a function of the robot's own motion)
+# and can't see the arm itself — v1 uses one fixed EXTERNAL view per scene, so these
+# are excluded from serial selection. Multi-view learning is a later stage.
+IN_HAND_OF_CFG = {1: {"043322070878"}, 2: {"104422070042"}, 3: {"045322071843"},
+                  4: {"045322071843"}, 5: {"104422070042", "135122079702"},
+                  6: {"135122075425", "135122070361"}, 7: {"135122075425", "135122070361"}}
 
 
 class SceneChunks:
     """Tick-anchored chunks for one scene. len() = number of chunks."""
 
-    def __init__(self, scene_dir, serial=None):
+    def __init__(self, scene_dir, serial=None, exclude=()):
         T = os.path.join(scene_dir, "transformed")
         joint = np.load(os.path.join(T, "joint.npy"), allow_pickle=True).item()
         grip = np.load(os.path.join(T, "gripper.npy"), allow_pickle=True).item()
-        self.serial = serial or sorted(set(joint) & set(grip))[0]
+        cands = sorted(set(joint) & set(grip))
+        self.serial = serial or next((s for s in cands if s not in exclude), cands[0])
         self._jd, self._gd = joint[self.serial], grip[self.serial]
 
         vec = np.atleast_1d(self._jd[next(iter(self._jd))])
