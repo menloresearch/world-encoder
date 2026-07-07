@@ -1,32 +1,30 @@
-"""PCA + cross-attention latent visualization across a robot image (LeJEPA-style).
+"""PCA-segmentation + attention latent visualization across a robot image (LeJEPA-style).
 
 The LeJEPA paper paints PCA of a ViT's PATCH tokens over the image ("clear semantic
 relationships"). Our trained encoders pool 8 Perceiver queries into a single vector
-(``PerceiverFuse`` ends in ``x.mean(1)``) — there is no patch grid at the output — so
-we show three patch-aligned panels per image, left (paper's exact experiment) to right
-(most specific to our encoder):
+(``PerceiverFuse`` ends in ``x.mean(1)``) — there is no patch grid at the output — so we
+show four patch-aligned panels per image, arranged as baseline-vs-ours pairs:
 
-  A  baseline ViT PCA  — frozen e0 ``patch_latent`` (196x768) -> PCA(3) -> RGB overlay.
-                         The literal LeJEPA experiment; model-independent reference.
-  B  encoder-proj PCA  — ``proj_v(patch) + mod[0]`` (196xd) -> PCA(3) -> RGB overlay.
-                         The closest "PCA of *our* latents" that stays patch-aligned
-                         (proj_v is one linear layer, so it re-mixes the ViT patches).
-  C  cross-attention   — vision-only fuse pass; softmax(q.k^T) of the 8 queries over the
-                         196 vision patches, averaged -> heatmap. What the bottleneck
-                         actually READS from the image (the Perceiver-native analog).
+  A  ViT PCA-seg     — frozen e0 ``patch_latent`` (196x768) -> PCA -> KMeans(k) -> flat
+                       color per patch. The paper's experiment, discretized for clarity.
+  B  encoder PCA-seg — ``proj_v(patch) + mod[0]`` (196xd), same PCA->KMeans(k). PCA of
+                       *our* latents (proj_v is one linear layer re-mixing the ViT patches).
+  C  ViT attention   — e0 last-layer CLS->patch self-attention (DINO-style), heads averaged.
+  D  encoder attention — vision-only fuse pass; softmax(q.k^T) of the 8 queries over the
+                       196 vision patches. What our fused bottleneck READS from the image.
 
-The encoder class is picked from the checkpoint keys (proj_s -> MMPerceiver, proj_m ->
-MMPerceiverChunks). Motor/ee/state are dummy tensors: the vision-only pass blocks them,
-so their values never reach the vision panels. Samples are drawn from the holdout_v1
-TEST split so nothing was trained on.
+A|B compare PCA structure (baseline vs ours); C|D compare where attention lands (baseline
+vs ours). The encoder class is picked from the checkpoint keys (proj_s -> MMPerceiver,
+proj_m -> MMPerceiverChunks). Motor/ee/state are dummy tensors the vision-only pass blocks,
+so their values never reach the vision panels. Samples come from the holdout_v1 TEST split.
 
   python -m world_tokenizer.pca_viz \
       --ckpt /mnt/nas/data/RH20T/checkpoints/phase1/all/seed0.pt \
-      --cfgs 1,3,5 --n-images 6 --out pca_viz_out/chunk_all.png
+      --cfgs 1,3,5 --n-images 6 --k 8 --out pca_viz_out/chunk_all.png
 
   python -m world_tokenizer.pca_viz \
       --ckpt /mnt/nas/data/RH20T/checkpoints/exp-20260704-032544/perceiver_seed0.pt \
-      --cfgs 3 --n-images 6 --out pca_viz_out/stage2_seed0.png
+      --cfgs 3 --n-images 6 --k 8 --out pca_viz_out/stage2_seed0.png
 """
 import argparse
 import csv
@@ -42,6 +40,8 @@ import numpy as np
 import torch
 import torchvision.transforms as T
 from PIL import Image
+from sklearn.cluster import KMeans
+from sklearn.decomposition import PCA
 
 from world_tokenizer.mm_perceiver import MMPerceiver, PerceiverFuse
 from world_tokenizer.mm_perceiver2 import MMPerceiverChunks
@@ -58,8 +58,7 @@ def sample_frames(split_csv, cfgs, n_images, frames_tmpl, rng):
     """Pick n_images (cfg, group, img_path), one mid-sequence frame per distinct TEST group."""
     rows = [r for r in csv.DictReader(open(split_csv)) if r["split"].strip() == "test"]
     picks = []
-    per_cfg = _split_counts(n_images, len(cfgs))
-    for cfg, k in zip(cfgs, per_cfg):
+    for cfg, k in zip(cfgs, _split_counts(n_images, len(cfgs))):
         groups = [r["group"].strip() for r in rows if r["cfg"].strip() == str(cfg)]
         rng.shuffle(groups)
         taken = 0
@@ -74,7 +73,6 @@ def sample_frames(split_csv, cfgs, n_images, frames_tmpl, rng):
 
 
 def _split_counts(n, k):
-    """Split n as evenly as possible into k buckets."""
     base, extra = divmod(n, k)
     return [base + (1 if i < extra else 0) for i in range(k)]
 
@@ -84,8 +82,7 @@ def _repr_frame(group, cfg, frames_tmpl):
     prefix = group.replace(f"_cfg_{int(cfg):04d}", "")
     scenes = sorted(glob.glob(os.path.join(frames_tmpl.format(cfg=int(cfg)), prefix + "_scene_*")))
     for sc in scenes:
-        cams = sorted(glob.glob(os.path.join(sc, "cam_*", "color")))
-        for cam in cams:
+        for cam in sorted(glob.glob(os.path.join(sc, "cam_*", "color"))):
             imgs = sorted(glob.glob(os.path.join(cam, "*.jpg")))
             if imgs:
                 return imgs[len(imgs) // 2]
@@ -97,52 +94,53 @@ def _repr_frame(group, cfg, frames_tmpl):
 def load_batch(paths):
     """-> (normalized [N,3,224,224] for the model, display crops [N,224,224,3] in 0..1)."""
     tf = T.Compose([T.Resize(256), T.CenterCrop(224), T.ToTensor()])
-    crops = torch.stack([tf(Image.open(p).convert("RGB")) for p in paths])  # [N,3,224,224]
-    norm = (crops - _NORM_M) / _NORM_S
-    return norm, crops.permute(0, 2, 3, 1).numpy()
+    crops = torch.stack([tf(Image.open(p).convert("RGB")) for p in paths])
+    return (crops - _NORM_M) / _NORM_S, crops.permute(0, 2, 3, 1).numpy()
 
 
-# ---------------------------------------------------------------------------------- PCA
-
-def pca_rgb(feats):
-    """feats [N,196,C] -> [N,224,224,3] uint8. Joint PCA(3) across all patches for
-    cross-image color comparability; robust per-channel percentile normalization."""
-    N, P, C = feats.shape
-    flat = feats.reshape(-1, C).float()
-    flat = flat - flat.mean(0, keepdim=True)
-    # right singular vectors = principal axes; project onto top-3
-    _, _, V = torch.linalg.svd(flat, full_matrices=False)
-    proj = (flat @ V[:3].T).reshape(N, P, 3).numpy()
-    lo, hi = np.percentile(proj, 2, axis=(0, 1)), np.percentile(proj, 98, axis=(0, 1))
-    proj = np.clip((proj - lo) / np.maximum(hi - lo, 1e-6), 0, 1)
-    out = np.stack([_upsample(proj[i].reshape(GRID, GRID, 3)) for i in range(N)])
-    return (out * 255).astype(np.uint8)
-
-
-def _upsample(grid_hw, size=224, mode=Image.BICUBIC):
-    """[14,14,(3)] float -> [224,224,(3)] float via PIL resize."""
-    is_rgb = grid_hw.ndim == 3
-    arr = (np.clip(grid_hw, 0, 1) * 255).astype(np.uint8)
+def _upsample(grid, size=224, mode=Image.BICUBIC):
+    """[14,14,(3)] float 0..1 -> [224,224,(3)] float 0..1 via PIL resize."""
+    is_rgb = grid.ndim == 3
+    arr = (np.clip(grid, 0, 1) * 255).astype(np.uint8)
     im = Image.fromarray(arr, mode="RGB" if is_rgb else "L").resize((size, size), mode)
-    a = np.asarray(im).astype(np.float32) / 255.0
-    return a
+    return np.asarray(im).astype(np.float32) / 255.0
 
 
-# -------------------------------------------------------------------- encoder + attention
+# ------------------------------------------------------------------------- PCA + KMeans
+
+_PALETTE = np.array([plt.cm.tab20(i)[:3] for i in range(20)])
+
+
+def pca_seg(feats, k, n_pca, seed):
+    """feats [N,196,C] -> [N,224,224,3] uint8. Per image: PCA(n_pca) denoise -> KMeans(k)
+    -> one flat palette color per patch. Clusters are re-indexed by mean PC1 so the same
+    color tends to mean the same thing (e.g. background) across images."""
+    N, P, C = feats.shape
+    n_pca = min(n_pca, C, P)
+    out = []
+    for i in range(N):
+        z = PCA(n_components=n_pca, random_state=seed).fit_transform(feats[i].numpy())  # [196,n_pca]
+        lab = KMeans(n_clusters=k, n_init=10, random_state=seed).fit_predict(z)          # [196]
+        order = np.argsort([z[lab == c, 0].mean() if (lab == c).any() else 0.0 for c in range(k)])
+        remap = np.empty(k, int); remap[order] = np.arange(k)
+        rgb = _PALETTE[remap[lab] % 20].reshape(GRID, GRID, 3)
+        out.append(_upsample(rgb, mode=Image.NEAREST))
+    return (np.stack(out) * 255).astype(np.uint8)
+
+
+# ---------------------------------------------------------------- encoder + attention
 
 def build_encoder(ckpt_path, device):
     """Instantiate the right Perceiver class from the checkpoint keys and load weights."""
     sd = torch.load(ckpt_path, map_location="cpu")
-    d = sd["proj_v.weight"].shape[0]
-    n_queries = sd["fuse.q"].shape[0]
+    d, n_queries = sd["proj_v.weight"].shape[0], sd["fuse.q"].shape[0]
     if "proj_s.weight" in sd:            # Stage-2 vision+state
         model, kind = MMPerceiver(d=d, n_queries=n_queries), "mm"
     elif "proj_m.weight" in sd:          # chunk vision+motor+ee
         model, kind = MMPerceiverChunks(d=d, n_queries=n_queries), "chunk"
     else:
         raise ValueError(f"unrecognized checkpoint: {ckpt_path}")
-    missing, unexpected = model.load_state_dict(sd, strict=False)
-    # sigreg random-projection buffers may differ; the panels only touch proj_v/mod/fuse.
+    missing, _ = model.load_state_dict(sd, strict=False)  # sigreg buffers may differ; unused here
     need = [k for k in missing if k.startswith(("proj_v", "mod", "fuse"))]
     assert not need, f"missing weights the viz needs: {need}"
     return model.to(device).eval(), kind
@@ -165,7 +163,7 @@ def fuse_with_attn(fuse: PerceiverFuse, context, attn_mask):
             while am.dim() < 4:
                 am = am.unsqueeze(0 if am.dim() == 2 else 1)
             scores = scores.masked_fill(am, float("-inf"))
-        last = scores.softmax(-1)                                            # [B,H,M,T]
+        last = scores.softmax(-1)
         x = x + ca(xq, context, attn_mask=attn_mask)
         x = x + ffn(n2(x))
     return x.mean(1), last
@@ -173,50 +171,49 @@ def fuse_with_attn(fuse: PerceiverFuse, context, attn_mask):
 
 @torch.no_grad()
 def encoder_panels(model, kind, patch, device):
-    """-> (proj_v patch tokens [N,196,d] for panel B, vision attention heat [N,14,14] for C).
+    """-> (proj_v patch tokens [N,196,d] for panel B, vision attention heat [N,14,14] for D).
     The fuse pass hides all non-vision modalities, matching the eval latent z_v."""
     patch = patch.to(device)
     B = patch.shape[0]
+    proj = model.proj_v(patch) + model.mod[0]                                # [B,196,d]
     if kind == "mm":
-        proj = model.proj_v(patch) + model.mod[0]                            # [B,196,d]
         ctx = model._context(patch, torch.zeros(B, 28, device=device))       # state dummy (blocked)
         mask = model._mask(block_state=True, device=device)                  # [M,197] state hidden
     else:
-        proj = model.proj_v(patch) + model.mod[0]                            # [B,196,d]
         mfeat = model.motor_feats(torch.zeros(B, 8, 3, device=device),
                                   torch.zeros(B, 8, 3, dtype=torch.bool, device=device))
-        ee = torch.zeros(B, 13, 15, device=device)
-        ctx = model._context(patch, mfeat, ee)                               # [B,217,d]
-        m_valid = torch.zeros(B, 8, dtype=torch.bool, device=device)
-        e_mask = torch.zeros(B, 13, dtype=torch.bool, device=device)
-        mask = model._attn_mask(m_valid, e_mask, hide=("m", "e"))            # motor+ee hidden
-    _, attn = fuse_with_attn(model.fuse, ctx, mask)                          # attn [B,H,M,T]
+        ctx = model._context(patch, mfeat, torch.zeros(B, 13, 15, device=device))   # [B,217,d]
+        mask = model._attn_mask(torch.zeros(B, 8, dtype=torch.bool, device=device),
+                                torch.zeros(B, 13, dtype=torch.bool, device=device),
+                                hide=("m", "e"))                             # motor+ee hidden
+    _, attn = fuse_with_attn(model.fuse, ctx, mask)                          # [B,H,M,T]
     heat = attn[..., :GRID * GRID].mean(1).mean(1)                           # 196 vision cols, over heads+queries
-    heat = heat.reshape(B, GRID, GRID).float().cpu().numpy()
-    return proj.float().cpu(), heat
+    return proj.float().cpu(), heat.reshape(B, GRID, GRID).float().cpu().numpy()
 
 
 # -------------------------------------------------------------------------------- figure
 
-def render(picks, crops, vit_pca, enc_pca, attn_heat, title, out_path):
+def _norm01(h):
+    return (h - h.min()) / max(h.max() - h.min(), 1e-8)
+
+
+def render(picks, crops, vit_seg, enc_seg, vit_attn, enc_attn, k, title, out_path):
     n = len(picks)
-    cols = ["image", "A · baseline ViT PCA", "B · encoder-proj PCA", "C · encoder attention"]
-    fig, axes = plt.subplots(n, 4, figsize=(4 * 2.6, n * 2.6), squeeze=False)
+    cols = [f"A · ViT PCA (k={k})", f"B · encoder PCA (k={k})", "C · ViT attention", "D · encoder attention"]
+    fig, axes = plt.subplots(n, 5, figsize=(5 * 2.6, n * 2.6), squeeze=False)
     for i, (cfg, group, _) in enumerate(picks):
         axes[i][0].imshow(crops[i])
-        axes[i][0].set_ylabel(f"cfg{cfg}\n{group[:22]}", fontsize=7, rotation=0,
-                              ha="right", va="center", labelpad=28)
-        axes[i][1].imshow(vit_pca[i])
-        axes[i][2].imshow(enc_pca[i])
-        h = attn_heat[i]
-        h = (h - h.min()) / max(h.max() - h.min(), 1e-8)                     # per-image min-max
-        axes[i][3].imshow(crops[i])
-        axes[i][3].imshow(_upsample(h), cmap="inferno", alpha=0.55)
-        for j in range(4):
+        axes[i][0].set_ylabel(f"cfg{cfg}\n{group[:22]}", fontsize=7, rotation=0, ha="right", va="center", labelpad=28)
+        axes[i][1].imshow(vit_seg[i])
+        axes[i][2].imshow(enc_seg[i])
+        axes[i][3].imshow(crops[i]); axes[i][3].imshow(_upsample(_norm01(vit_attn[i])), cmap="inferno", alpha=0.55)
+        axes[i][4].imshow(crops[i]); axes[i][4].imshow(_upsample(_norm01(enc_attn[i])), cmap="inferno", alpha=0.55)
+        for j in range(5):
             axes[i][j].set_xticks([]); axes[i][j].set_yticks([])
+    axes[0][0].set_title("image", fontsize=9)
     for j, c in enumerate(cols):
-        axes[0][j].set_title(c, fontsize=9)
-    fig.suptitle(title, fontsize=11, y=0.998)
+        axes[0][j + 1].set_title(c, fontsize=9)
+    fig.suptitle(title, fontsize=11, y=0.999)
     fig.tight_layout(rect=(0.02, 0, 1, 0.99))
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     fig.savefig(out_path, dpi=140, bbox_inches="tight")
@@ -229,6 +226,8 @@ def main():
     ap.add_argument("--ckpt", required=True, help="trained Perceiver encoder .pt")
     ap.add_argument("--cfgs", default="3", help="comma list of cfgs to sample from, e.g. 1,3,5")
     ap.add_argument("--n-images", type=int, default=6)
+    ap.add_argument("--k", type=int, default=8, help="KMeans clusters for the PCA-segmentation panels")
+    ap.add_argument("--n-pca", type=int, default=16, help="PCA components kept (denoise) before clustering")
     ap.add_argument("--split-csv", default="splits/holdout_v1.csv")
     ap.add_argument("--frames-tmpl", default="/mnt/nas/data/RH20T/frames/cfg{cfg}")
     ap.add_argument("--out", default="pca_viz_out/panels.png")
@@ -246,15 +245,18 @@ def main():
 
     e0 = load_vitv2(pretrained=True).to(args.device).eval()
     with torch.no_grad(), torch.autocast(args.device, dtype=torch.bfloat16, enabled=args.device == "cuda"):
-        patch = e0(norm.to(args.device))["patch_latent"].float().cpu()      # [N,196,768]
+        out = e0(norm.to(args.device), last_self_attention=True)
+        patch = out["patch_latent"].float().cpu()                            # [N,196,768]
+        vit_attn = out["last_self_attention"].float().mean(1)                # [N,heads,196] -> [N,196]
+    vit_attn = vit_attn.reshape(len(picks), GRID, GRID).cpu().numpy()
 
     model, kind = build_encoder(args.ckpt, args.device)
-    proj, heat = encoder_panels(model, kind, patch, args.device)
+    proj, enc_attn = encoder_panels(model, kind, patch, args.device)
 
-    vit_pca = pca_rgb(patch)
-    enc_pca = pca_rgb(proj)
+    vit_seg = pca_seg(patch, args.k, args.n_pca, args.seed)
+    enc_seg = pca_seg(proj, args.k, args.n_pca, args.seed)
     title = f"{os.path.basename(os.path.dirname(args.ckpt))}/{os.path.basename(args.ckpt)}  ({kind})"
-    render(picks, crops, vit_pca, enc_pca, heat, title, args.out)
+    render(picks, crops, vit_seg, enc_seg, vit_attn, enc_attn, args.k, title, args.out)
 
 
 if __name__ == "__main__":
