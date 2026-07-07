@@ -25,10 +25,13 @@ The encoder class is picked from the checkpoint keys (proj_s -> MMPerceiver,
 proj_m -> MMPerceiverChunks). Motor/ee/state are dummy tensors the vision-only pass blocks,
 so their values never reach the vision panels. Samples come from the holdout_v1 TEST split.
 
-Two ways to choose frames:
+Three ways to choose frames:
   * sampling  — random TEST-split scenes across --cfgs (default), one frame each.
   * pinned    — an EXACT scene via --cfg --task --user --scene (all four), N time-strided
                 frames from --cam-idx. Frame dirs are task_{t}_user_{u}_scene_{s}_cfg_{c}.
+  * list      — --scenes-csv <file> (columns task,user,cfg,scene): one representative frame
+                per listed scene, one row each. The curated default set of visualizations
+                lives at splits/viz_scenes_default.csv (one hand-picked scene per cfg).
 
   # sampling mode
   python -m world_tokenizer.pca_viz \
@@ -45,6 +48,7 @@ import csv
 import glob
 import os
 import random
+import re
 
 import matplotlib
 
@@ -124,6 +128,28 @@ def pinned_frames(cfg, task, user, scene, n_images, cam_idx, frames_tmpl):
     assert fs, f"no frames at {path} (cam_idx={cam_idx}) — check --cfg/--task/--user/--scene/--cam-idx"
     stride = max(1, len(fs) // n_images)
     return [(cfg, name, p) for p in fs[::stride][:n_images]]
+
+
+def scenes_from_csv(path, cam_idx, frames_tmpl):
+    """One representative (mid-sequence) frame per scene listed in a CSV with columns
+    task,user,cfg,scene -> [(cfg, scene_name, img_path), ...], one row per scene."""
+    picks = []
+    for r in csv.DictReader(open(path)):
+        cfg, task, user, scene = (int(r["cfg"]), int(r["task"]), int(r["user"]), int(r["scene"]))
+        name, sp = scene_dir(cfg, task, user, scene, frames_tmpl)
+        _, fs = scene_cam_frames(sp, cam_idx)
+        assert fs, f"no frames for {name} (cam_idx={cam_idx}) from {path}"
+        picks.append((cfg, name, fs[len(fs) // 2]))
+    return picks
+
+
+def short_label(cfg, group):
+    """Compact 2-line row label from a scene/group name: 'cfg3\\nt3 u16 s7'."""
+    m = re.search(r"task_(\d+)_user_(\d+)(?:_scene_(\d+))?_cfg_(\d+)", group)
+    if not m:
+        return f"cfg{cfg}\n{group[:20]}"
+    t, u, s, _ = m.groups()
+    return f"cfg{cfg}\nt{int(t)} u{int(u)}" + (f" s{int(s)}" if s else "")
 
 
 # ------------------------------------------------------------------------------- images
@@ -274,7 +300,7 @@ def render(picks, crops, vit_rgb, enc_rgb, vit_attn, enc_attn, title, out_path):
     fig, axes = plt.subplots(n, 5, figsize=(5 * 2.6, n * 2.6), squeeze=False)
     for i, (cfg, group, _) in enumerate(picks):
         axes[i][0].imshow(crops[i])
-        axes[i][0].set_ylabel(f"cfg{cfg}\n{group[:22]}", fontsize=7, rotation=0, ha="right", va="center", labelpad=28)
+        axes[i][0].set_ylabel(short_label(cfg, group), fontsize=7, rotation=0, ha="right", va="center", labelpad=24)
         axes[i][1].imshow(vit_rgb[i])
         axes[i][2].imshow(enc_rgb[i])
         _overlay(axes[i][3], crops[i], vit_attn[i])
@@ -296,6 +322,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--ckpt", required=True, help="trained Perceiver encoder .pt")
     ap.add_argument("--cfgs", default="3", help="[sampling mode] comma list of cfgs, e.g. 1,3,5")
+    ap.add_argument("--scenes-csv", help="[list mode] CSV (task,user,cfg,scene) -> one row per scene, "
+                    "one representative frame each. Overview across curated scenes.")
     # pinned-scene mode: give all four to visualize N time-strided frames of ONE exact scene
     ap.add_argument("--cfg", type=int, help="pinned scene: config id")
     ap.add_argument("--task", type=int, help="pinned scene: task id")
@@ -316,7 +344,10 @@ def main():
     args = ap.parse_args()
 
     pinned = [args.cfg, args.task, args.user, args.scene]
-    if any(v is not None for v in pinned):
+    if args.scenes_csv:
+        picks = scenes_from_csv(args.scenes_csv, args.cam_idx, args.frames_tmpl)
+        src = f"{len(picks)} curated scenes from {args.scenes_csv}"
+    elif any(v is not None for v in pinned):
         assert all(v is not None for v in pinned), "pinned mode needs all of --cfg --task --user --scene"
         picks = pinned_frames(args.cfg, args.task, args.user, args.scene, args.n_images,
                               args.cam_idx, args.frames_tmpl)
