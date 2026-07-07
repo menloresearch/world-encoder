@@ -7,7 +7,17 @@ Standing eval rule (learned in Stage 1): pair **RankMe** (label-free health / co
 an **unsaturated, robot-relevant probe** (predict robot state, or contact/force), always
 **scene-held-out** and **multi-seed**. One saturated metric will mislead you.
 
-## Stages 0-1 — LeJEPA finetune on cfg3 video only
+> **R² ↑** in every table below: higher is better (fraction of held-out target variance explained;
+> 1.0 = perfect, 0 = no better than predicting the mean, negative = worse than the mean).
+
+## Initial experiments — LeJEPA finetune + single-timestep video+state fusion
+
+Everything in this section uses the **legacy 28-dim state vector** (one UR5-shaped layout) and a
+**single timestep** — the POC path before the robot-agnostic chunk packet of Phase 1. Two chapters:
+(0-1) does finetuning the vision backbone on RH20T video help, and (2) does fusing video +
+robot_state in one encoder learn genuine cross-modal structure.
+
+### Stages 0-1 — LeJEPA finetune on cfg3 video only
 
 Pipeline verified end to end: cfg3 → 2.33M frames (799 scenes, 66 tasks) → 240 WebDataset shards →
 DDP continue-LeJEPA from `OK-AI/lejepa-vitb16-pretrain-in1k` → eval.
@@ -25,12 +35,12 @@ DDP continue-LeJEPA from `OK-AI/lejepa-vitb16-pretrain-in1k` → eval.
 Scripts: `extract_frames` → `make_shards` → `train` → `eval_lejepa` / `probe_curve` /
 `robust_robot_eval` / `contact_probe`; `gate` for the video↔force alignment sanity check.
 
-## Stage 2 — video + robot_state (verified)
+### Stage 2 — video + robot_state (verified): cfg3 POC → cfg3+cfg4 scale-up
 
 Question: does fusing video + robot_state in one encoder learn genuine cross-modal structure — a
 latent better than either modality alone — and is the gain *cross-modal*, not just compression?
 
-**What we ran** (single timestep, cfg3 video + robot_state):
+**What we ran** (single timestep, video + robot_state):
 
 - Signal gate: frozen vision → state R² = **0.43** (tcp 0.73) — cross-modal signal is real, so
   building the fusion encoder is justified. (`step1_gate`)
@@ -44,51 +54,71 @@ latent better than either modality alone — and is the gain *cross-modal*, not 
   Stage 5); not action-conditioned (#4).
 - Eval: cross-modal predictability + RankMe, scene-held-out, 5 seeds, encoder retrained per split,
   with a PCA-256 compression control. (`train_perceiver`)
+- **Two runs.** POC: cfg3 only, ~24k frames, 1 setup. Scale-up (2026-07-04, branch
+  `user/jiaqi-stage2-cfg34`): cfg3+cfg4, 30 frames/scene → 86,430 frames / 2,881 scenes (**3.6×**
+  data; both UR5 so the 28-dim layout still fits). Run script `run_stage2_cfg34.sh`; artifacts NAS
+  `checkpoints/exp-20260704-032544/`.
 
-**Outcome — fusion works, and the gain is genuinely cross-modal.** Predicting robot state (R²,
-5 seeds, scene-held-out, 24k frames, encoder retrained per split):
+**Outcome — fusion works, and the gain is genuinely cross-modal.** Predicting robot state (R², 5
+seeds, scene-held-out, encoder retrained per split):
 
-| feature (→ predict robot state) | R² |
-|---|---|
-| **Perceiver `z_v` (256, cross-modal, state masked)** | **0.551 ±0.018** |
-| raw vision (768, mean-pooled) | 0.257 ±0.075 |
-| PCA-256 of LeJEPA vision (compression control) | 0.134 ±0.047 |
+| feature (→ predict robot state) | cfg3 POC · R² ↑ | cfg3+cfg4 · R² ↑ |
+|---|---|---|
+| **Perceiver `z_v` (256, cross-modal, state masked)** | **0.551 ±0.018** | **0.653 ±0.008** |
+| raw vision (768, mean-pooled) | 0.257 ±0.075 | 0.516 ±0.010 |
+| PCA-256 of LeJEPA vision (compression control) | 0.134 ±0.047 | 0.418 ±0.015 |
 
-- `z_v` beats raw vision by **+0.294 ±0.078** and PCA-256 by **+0.417 ±0.050** — **both on all 5 seeds**.
+- `z_v` beats raw vision by **+0.294 ±0.078** (POC) / **+0.137 ±0.007** (scale) and the PCA control by
+  **+0.417 ±0.050** / **+0.235 ±0.010** — **positive on all 5 seeds in both runs**. RankMe 211 (no collapse).
 - Beating the PCA compression control ⇒ the gain is **cross-modal, not dimensionality reduction**.
-  A latent 3× smaller than raw vision predicts the robot ~2× better. RankMe 211 (no collapse).
+  A latent 3× smaller than raw vision predicts the robot better; PCA-256 has the *same* compression
+  with no cross-modal training and loses, so the win can't be attributed to "compress to 256 helps."
 - The vision-only fused latent (`z_v`) is used at eval, so no state leaks in — the encoder has
   *learned* to read robot-relevant structure out of pixels by having been trained alongside state.
+- The cross-modal gain holds at 3.6× the data; the ordering is unchanged.
+
+**Why every baseline jumps from cfg3 → cfg3+cfg4 (analysis).** The margin over raw narrows in
+absolute terms (+0.294 → +0.137) but stays decisive vs the compression control (+0.417 → +0.235).
+Crucially, the baselines rise for reasons that are mostly *not* "raw vision got better at decoding
+state within one robot":
+
+1. **R²'s denominator changed — pooling two setups injects easy, pixel-readable between-config
+   variance.** R² = variance-explained ÷ *total* target variance. cfg3-only measures within-setup
+   decoding; cfg3+cfg4 pools two UR5 setups with different camera mounts, backgrounds, and
+   task/pose distributions. That between-setup difference is now part of total state variance and is
+   *trivially* readable from pixels (any encoder can tell a cfg3 frame from a cfg4 frame by the
+   background). So every vision baseline earns "free" R² from cross-config discrimination before
+   decoding any within-config pose — which is why all three rows rise together and the ordering is
+   preserved. This is a partial confound, not pure improvement.
+2. **The POC numbers are noisy / under-fit.** Error bars collapse ±0.075 → ±0.010 (7× tighter). With
+   ~24k frames split scene-held-out over 5 seeds, each probe fit on few scenes and the vision→state
+   map (high-dimensional, data-hungry) was under-fit, so 0.257 is a high-variance underestimate; part
+   of the jump to 0.516 is just the estimate settling with 3.6× the data.
+3. **PCA-256 improved the most (+0.284 > raw's +0.259), which is diagnostic.** In the POC PCA-256
+   (0.134) sat *below* raw (0.257): the top-256 principal directions of the frozen features weren't
+   where the state signal lived (and/or the covariance was poorly estimated on 24k frames). At scale
+   the covariance stabilizes *and* the new between-config variance lands in the top PCs and correlates
+   with state — consistent with point 1.
+4. **`z_v` rises the least (+0.102).** It was already reading state-relevant structure out of pixels,
+   so it had the least to gain from the easy between-config variance and extra fit data — closest to
+   saturation. This is why the margin over raw narrows while the margin over the compression control
+   stays large.
+
+   Net: the baseline jump is mostly a changed R² denominator plus the POC being noisy/under-fit — not
+   within-robot decoding suddenly improving. The comparison that carries the cross-modal claim is
+   `z_v` vs the compression control, which stays decisive across both runs.
 
 **Design note:** masked cross-modal prediction is required, not optional — a shared encoder without
 it underperforms single-modality (MJEPA). SIGReg only prevents collapse.
 
-**Left:** ablations (bottleneck size, joint-SIGReg on/off), and **modality × time** (temporal
-masking → predict future force/contact) = the Stage-5 upgrade.
-
-## Stage 2 at scale — cfg3+cfg4 (2026-07-04, branch `user/jiaqi-stage2-cfg34`)
-
-First scale-up beyond the cfg3 POC: same recipe (frozen `e0` + Perceiver, single timestep,
-legacy 28-dim state — cfg3/4 are both UR5 so the layout still fits), 30 frames/scene →
-86,430 frames / 2,881 scenes, 5 seeds, scene-held-out, encoder retrained per split.
-Run script: `run_stage2_cfg34.sh`; artifacts: NAS `checkpoints/exp-20260704-032544/`.
-
-| feature (→ predict robot state) | R² |
-|---|---|
-| **Perceiver `z_v` (256, cross-modal, state masked)** | **0.653 ±0.008** |
-| raw vision (768, mean-pooled) | 0.516 ±0.010 |
-| PCA-256 of LeJEPA vision (compression control) | 0.418 ±0.015 |
-
-- `z_v` − raw = **+0.137 ±0.007**, `z_v` − PCA-256 = **+0.235 ±0.010** — positive on all
-  5 seeds; RankMe 211 (no collapse).
-- The cross-modal gain holds at 3.6× the POC's data. Every baseline improves with more
-  data (raw 0.257 → 0.516) while the ordering is unchanged — the margin over raw narrows
-  in absolute terms but stays decisive vs the compression control.
-- Beyond cfg3+4 the 28-dim state path breaks (joint dims differ per robot); the multi-cfg
-  path is the chunk packet (`chunk_state.py` → `precompute_chunks.py` → `dataloader.py`),
-  used from Phase 1 of [PLAN.md](PLAN.md) onward.
-- **Still owed before this result goes external:** the vision-only-*trained* Perceiver
-  ablation (isolate cross-modal gain from "trained an in-domain encoder").
+**Left / still owed:**
+- The vision-only-*trained* Perceiver ablation (isolate cross-modal gain from "trained an in-domain
+  encoder") — owed before this result goes external.
+- Ablations: bottleneck size, joint-SIGReg on/off.
+- Beyond cfg3+4 the 28-dim state path breaks (joint dims differ per robot); the multi-cfg path is the
+  chunk packet (`chunk_state.py` → `precompute_chunks.py` → `dataloader.py`), used from Phase 1 of
+  [PLAN.md](PLAN.md) onward.
+- **modality × time** (temporal masking → predict future force/contact) = the Stage-5 upgrade.
 
 ## Phase 1 — full-RH20T transfer matrix (2026-07-07, PRELIMINARY — ALL run 4/5 seeds)
 
@@ -109,7 +139,7 @@ specialists**, and does cross-modal fusion still beat raw vision at full scale?
   5×4 transfer matrix. Baselines fit on train rows only: raw ViT (768), PCA-256. Eval latent
   = **vision-only `z_v`**. Caches on NAS `caches/cfg{1..7}.npz` (~53 GB); `run_matrix.sh`.
 
-**Diagonal — each encoder on its OWN robot** (R², vision-only `z_v`; specialists 5-seed
+**Diagonal — each encoder on its OWN robot** (R² ↑, vision-only `z_v`; specialists 5-seed
 final, ALL 4-seed preliminary):
 
 | robot | ALL z_v motor | spec z_v motor | raw motor | ALL z_v **ee** | spec z_v ee | raw ee |
