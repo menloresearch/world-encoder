@@ -29,7 +29,7 @@ from torch.utils.data.distributed import DistributedSampler
 
 from world_tokenizer.dataset import (MultiCropRGB, collate, make_wds_loader, split_frame_paths,
                                       split_views)
-from world_tokenizer.model import LeJEPAVideo
+from world_tokenizer.model import LeJEPAVideo, LeJEPAVisionHead
 
 
 def _dist_init():
@@ -103,6 +103,10 @@ def main():
     ap.add_argument("--batch-size", type=int, default=64, help="per-GPU batch size")
     ap.add_argument("--n-global", type=int, default=2)
     ap.add_argument("--n-local", type=int, default=0)
+    ap.add_argument("--head-only", "--freeze-backbone", dest="head_only", action="store_true",
+                    help="freeze the ViT, train ONLY proj_v (768->d) — the matched baseline to "
+                         "the multimodal encoder (LeJEPAVisionHead). Use higher LR (~1e-3).")
+    ap.add_argument("--head-dim", type=int, default=256, help="proj_v output dim (--head-only)")
     ap.add_argument("--lr", type=float, default=2e-4)
     ap.add_argument("--weight-decay", type=float, default=0.05)
     ap.add_argument("--num-workers", type=int, default=8)
@@ -121,12 +125,17 @@ def main():
         if is_main:
             print(*a, flush=True)
 
-    net = LeJEPAVideo(pretrained=True).to(dev)
+    if args.head_only:
+        net = LeJEPAVisionHead(d=args.head_dim, pretrained=True).to(dev)
+    else:
+        net = LeJEPAVideo(pretrained=True).to(dev)
     if is_dist:
-        net = torch.nn.SyncBatchNorm.convert_sync_batchnorm(net)
-        net = DDP(net, device_ids=[local_rank])  # all params get grad -> no find_unused
+        if not args.head_only:  # head-only has no trainable BN (backbone frozen) -> skip convert
+            net = torch.nn.SyncBatchNorm.convert_sync_batchnorm(net)
+        net = DDP(net, device_ids=[local_rank])  # frozen backbone params carry no grad
     raw = net.module if is_dist else net
-    opt = torch.optim.AdamW(net.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    trainable = [p for p in net.parameters() if p.requires_grad]  # only proj_v when head-only
+    opt = torch.optim.AdamW(trainable, lr=args.lr, weight_decay=args.weight_decay)
 
     if args.shards:
         stream, spe, total_steps, n = _wds_stream(args, world, rank)
@@ -136,8 +145,11 @@ def main():
         src_desc = f"{n} frames"
     if args.max_steps:
         total_steps = min(total_steps, args.max_steps) if not args.shards else args.max_steps
-    log(f"{src_desc} | world={world} | bs/gpu={args.batch_size} (global={world * args.batch_size}) "
-        f"| {spe} steps/epoch | {total_steps} total steps | n_global={args.n_global} n_local={args.n_local}")
+    mode = f"HEAD-ONLY d={args.head_dim} ({sum(p.numel() for p in trainable)/1e3:.0f}k params)" \
+        if args.head_only else "FULL-FINETUNE"
+    log(f"{mode} | {src_desc} | world={world} | bs/gpu={args.batch_size} "
+        f"(global={world * args.batch_size}) | {spe} steps/epoch | {total_steps} total steps "
+        f"| n_global={args.n_global} n_local={args.n_local}")
 
     net.train()
     step = 0

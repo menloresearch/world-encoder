@@ -99,8 +99,8 @@ class _FrameDS(torch.utils.data.Dataset):
 
 
 @torch.no_grad()
-def encode_vision(backbone, paths, dev, bs=256, workers=12):
-    """Mean-pooled patch tokens [N, 768] from a finetuned ViT. Frame IO over NFS is the
+def encode_vision(embed_fn, paths, dev, bs=256, workers=12):
+    """Vision features [N, d] via `embed_fn(imgs)->[B,d]`. Frame IO over NFS is the
     bottleneck, so decode/transform runs in `workers` DataLoader processes."""
     from torch.utils.data import DataLoader
     dl = DataLoader(_FrameDS(paths), batch_size=bs, num_workers=workers, pin_memory=True)
@@ -108,8 +108,7 @@ def encode_vision(backbone, paths, dev, bs=256, workers=12):
     for imgs in tqdm(dl, desc="encode-vision", mininterval=10, leave=False):
         imgs = imgs.to(dev, non_blocking=True)
         with torch.autocast("cuda", dtype=torch.bfloat16):
-            pt = backbone.model(imgs)["patch_latent"]        # [B,196,768]
-        out.append(pt.float().mean(1).cpu().numpy())
+            out.append(embed_fn(imgs).float().cpu().numpy())
     return np.concatenate(out)
 
 
@@ -135,11 +134,11 @@ def _record_frame_paths(ds, frames_base, idx):
     return paths
 
 
-def eval_vision_embodiment(backbone, cache_dir, cfgs, split, dev, frames_base,
+def eval_vision_embodiment(embed_fn, cache_dir, cfgs, split, dev, frames_base,
                            bs=256, eval_max=0, workers=12):
-    """Probe finetuned-ViT (ft) vs frozen raw ViT vs PCA-256 on one embodiment's held-out
-    groups; probes fit on ITS train groups (same protocol as eval_embodiment).
-    eval_max>0 strides the records to that many (smoke / cheap runs; changes the rows)."""
+    """Probe finetuned vision (ft, via `embed_fn`) vs frozen raw ViT (768) vs PCA-256 on one
+    embodiment's held-out groups; probes fit on ITS train groups (same protocol as
+    eval_embodiment). eval_max>0 strides the records (smoke / cheap runs; changes the rows)."""
     ds = ChunkDataset(cache_dir, cfgs)
     d = ds._d
     is_test = np.array([split[g] == "test" for g in
@@ -151,7 +150,7 @@ def eval_vision_embodiment(backbone, cache_dir, cfgs, split, dev, frames_base,
     paths = _record_frame_paths(ds, frames_base, sel)
     have = np.array([p is not None and os.path.exists(p) for p in paths])
     sel = sel[have]                                          # record indices we actually encode
-    ft = encode_vision(backbone, [p for p, h in zip(paths, have) if h], dev, bs=bs, workers=workers)
+    ft = encode_vision(embed_fn, [p for p, h in zip(paths, have) if h], dev, bs=bs, workers=workers)
     raw = d["patch"][sel].astype(np.float32).mean(1)         # frozen ViT, same records
     is_test = is_test[sel]
 
@@ -181,13 +180,28 @@ def eval_vision_embodiment(backbone, cache_dir, cfgs, split, dev, frames_base,
     return out
 
 
-def run_vision_eval(args, dev):
-    """--vision-ckpt path: load a LeJEPA-finetuned backbone and probe it per embodiment."""
-    from world_tokenizer.model import LeJEPAVideo
+def _load_vision_embed(ckpt_path, dev):
+    """Load a --vision-ckpt and return (embed_fn(imgs)->[B,d], d, kind). Auto-detects:
+      * HEAD-ONLY (LeJEPAVisionHead): frozen ViT + proj_v -> proj_v(patch).mean(1)  [d=256]
+      * FULL-FINETUNE (LeJEPAVideo): mean-pooled finetuned patch tokens              [768]"""
+    from world_tokenizer.model import LeJEPAVideo, LeJEPAVisionHead
+    ck = torch.load(ckpt_path, map_location=dev)
+    sd = ck["model"] if "model" in ck else ck
+    if any(k.endswith("proj_v.weight") or k == "proj_v.weight" for k in sd):
+        d = sd[[k for k in sd if k.endswith("proj_v.weight")][0]].shape[0]
+        net = LeJEPAVisionHead(d=d, pretrained=False).to(dev).eval()
+        net.load_state_dict(sd)
+        return (lambda imgs: net.embed(imgs)), d, "head"
     net = LeJEPAVideo(pretrained=False).to(dev).eval()
-    ck = torch.load(args.vision_ckpt, map_location=dev)
-    net.load_state_dict(ck["model"] if "model" in ck else ck)
-    backbone = net.backbone
+    net.load_state_dict(sd)
+    bb = net.backbone
+    return (lambda imgs: bb.model(imgs)["patch_latent"].mean(1)), 768, "full-finetune"
+
+
+def run_vision_eval(args, dev):
+    """--vision-ckpt path: probe a finetuned vision encoder (head or full) per embodiment."""
+    ck = torch.load(args.vision_ckpt, map_location="cpu")
+    embed_fn, ft_dim, kind = _load_vision_embed(args.vision_ckpt, dev)
 
     split = load_split()
     have = [n for n in range(1, 8)
@@ -197,11 +211,13 @@ def run_vision_eval(args, dev):
                  if v and (not args.eval_embodiments or k in args.eval_embodiments)}
     run_dir = os.path.join(args.out_dir, args.tag)
     os.makedirs(run_dir, exist_ok=True)
-    print(f"[{args.tag}] VISION-CKPT {args.vision_ckpt} | eval {eval_embs} | dev {dev}", flush=True)
+    print(f"[{args.tag}] VISION-CKPT {args.vision_ckpt} | {kind} ft_dim={ft_dim} "
+          f"| eval {eval_embs} | dev {dev}", flush=True)
 
-    results = {"vision_ckpt": args.vision_ckpt, "step": ck.get("step"), "embodiments": {}}
+    results = {"vision_ckpt": args.vision_ckpt, "kind": kind, "ft_dim": ft_dim,
+               "step": ck.get("step") if isinstance(ck, dict) else None, "embodiments": {}}
     for emb, cfgs in eval_embs.items():
-        res = eval_vision_embodiment(backbone, args.cache_dir, cfgs, split, dev,
+        res = eval_vision_embodiment(embed_fn, args.cache_dir, cfgs, split, dev,
                                      args.frames_base, bs=args.enc_bs, eval_max=args.eval_max,
                                      workers=args.workers)
         results["embodiments"][emb] = res
