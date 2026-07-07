@@ -99,14 +99,39 @@ no collapse; ablations survive.
 
 The ×time half of loss #1; Stage-5 kickoff (video + state only; audio stays out). The data
 side already exists: tick-anchored chunks, native-rate ee windows (100/125 Hz), irregular
-ticks (6.7–14.7 Hz), `ts` cached per chunk. Remaining work is model-side only:
+ticks (6.7–14.7 Hz), `ts` cached per chunk. Remaining work is model-side only.
 
-- [ ] **2.1** Continuous-time embedding (Time2Vec / mTAN-style Fourier features of the
-      real timestamp) on every token.
-- [ ] **2.2** Multi-tick context windows (Δt-based selection via cached `ts`).
-- [ ] **2.3** Mask over (modality × time) → predict held-out-time / future ee latents.
-- [ ] **2.4** Eval: future force/contact prediction at varying Δt vs the single-timestep
+**Framing:** irregular multivariate time series → compact latent via PerceiverIO; the crux
+is the time/position encoding. **Time goes in the token, not the grid** — the no-resample
+white-space bet.
+
+- [ ] **2.1 Continuous-time embedding on every token (the "when" slot).** Target = mTAN, but
+      for us only mTAN's *continuous-time embedding*, NOT the whole mTAN network — the
+      Perceiver already is mTAN's other half (learned queries = reference points; cross-attn
+      = attention-to-observations), so full mTAN would duplicate it. **Sequence:** start with
+      Fourier / Time2Vec (fixed, **log-spaced** frequencies), upgrade to learned frequencies
+      (= mTAN proper) only if numbers demand — same interface, no rework. **Make-or-break
+      knob:** the frequency bank must span ~ms → seconds (F/T ~100 Hz, episodes multi-second)
+      — matters more than Fourier-vs-mTAN. RoPE/VideoRoPE only later, for latent
+      self-attention, and the continuous (real-Δt) variant, not integer-index.
+- [ ] **2.2 Per-stream tokenizers.** Dense F/T stream (~100–125 Hz): a **1D-CNN** tokenizer
+      (kernel-16 → 128 to start) — locally near-regular within a chunk, the right home for
+      "flatten the 8×3 grid, conv over time"; keep the mask as extra channels (24 vals + 24
+      mask = 48 in-ch) so variable-DOF masking survives. Sparse streams (vision/joints
+      ~10 Hz): stay as native tokens with continuous-time embeddings (a kernel-16 CNN is
+      nonsensical at 10 Hz = 1.6 s). The CNN is a tokenizer for ONE dense stream, not the
+      global time model.
+- [ ] **2.3 Multi-tick context windows** (Δt-based selection via cached `ts`); mask over
+      (modality × time) → predict held-out-time / future ee latents. **Causality** is an
+      attention-mask property, not baked into the conv: causal for the prediction head + any
+      deployment (no peeking at the future you predict); **test both causal vs bidirectional**
+      for the within-window representation objective (V-JEPA-style bidirectional often wins
+      on probe quality).
+- [ ] **2.4 Eval:** future force/contact prediction at varying Δt vs the single-timestep
       Phase-1 baseline.
+- [ ] **2.5 Decisive ablation:** continuous-time (no resample) **vs** resample-everything +
+      1D-CNN (the classical DSP approach). Validates or kills the white-space claim — build
+      both; if continuous-time doesn't beat resample+CNN, adopt the simpler thing honestly.
 
 **Gate:** temporal masking beats single-timestep on future-state prediction with RankMe
 stable. Loss #4 (action-conditioned forward prediction) only after this gate.
