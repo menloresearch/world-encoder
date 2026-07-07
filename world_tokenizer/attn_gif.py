@@ -9,9 +9,14 @@ self-attention is animated side-by-side for comparison.
 Attention is normalized GLOBALLY across the whole sequence (robust 2-98 percentile) so the
 heatmap intensity is comparable frame-to-frame and doesn't flicker.
 
+Choose the scene by an EXACT id (--cfg --task --user --scene), by an explicit holdout
+--group (+ --scene-idx), or randomly from the --cfg TEST split.
+
+  # pinned exact scene (cfg3, task16, user11, scene1)
   python -m world_tokenizer.attn_gif \
       --ckpt /mnt/nas/data/RH20T/checkpoints/phase1/all/seed0.pt \
-      --cfg 3 --n-frames 48 --fps 12 --also-vit --out pca_viz_out/attn_chunk.gif
+      --cfg 3 --task 16 --user 11 --scene 1 --n-frames 48 --fps 12 --also-vit \
+      --out pca_viz_out/attn_scene.gif
 """
 import argparse
 import csv
@@ -25,11 +30,20 @@ import torch
 from PIL import Image, ImageDraw
 
 from world_tokenizer.model import load_vitv2
-from world_tokenizer.pca_viz import GRID, _NORM_M, _NORM_S, build_encoder, encoder_panels
+from world_tokenizer.pca_viz import (GRID, _NORM_M, _NORM_S, build_encoder, encoder_attention,
+                                     scene_cam_frames, scene_dir)
 
 
-def pick_sequence(split_csv, cfg, group, scene_idx, cam_idx, n_frames, frames_tmpl, rng):
-    """-> (group, list of n_frames evenly-strided frame paths from one scene/cam)."""
+def pick_sequence(split_csv, cfg, task, user, scene, group, scene_idx, cam_idx, n_frames, frames_tmpl, rng):
+    """-> (name, list of n_frames evenly-strided frame paths from one scene/cam).
+    Pinned mode: give cfg+task+user+scene for an EXACT scene. Else group/random by cfg."""
+    if task is not None and user is not None and scene is not None:
+        assert cfg is not None, "pinned scene needs --cfg too"
+        name, path = scene_dir(cfg, task, user, scene, frames_tmpl)
+        _, fs = scene_cam_frames(path, cam_idx)
+        assert len(fs) >= 2, f"no usable frames at {path} (cam_idx={cam_idx})"
+        stride = max(1, len(fs) // n_frames)
+        return name, fs[::stride][:n_frames]
     rows = [r for r in csv.DictReader(open(split_csv)) if r["split"].strip() == "test"]
     if group:
         groups = [group]
@@ -105,9 +119,12 @@ def captioned(arr_u8, text):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--ckpt", required=True)
-    ap.add_argument("--cfg", type=int, default=3)
-    ap.add_argument("--group", default=None, help="explicit holdout group; else a random test group of --cfg")
-    ap.add_argument("--scene-idx", type=int, default=0)
+    ap.add_argument("--cfg", type=int, default=3, help="config id (also used as the pinned-scene cfg)")
+    ap.add_argument("--task", type=int, help="pinned scene: task id (with --user --scene for an exact scene)")
+    ap.add_argument("--user", type=int, help="pinned scene: user id")
+    ap.add_argument("--scene", type=int, help="pinned scene: scene id")
+    ap.add_argument("--group", default=None, help="[else] explicit holdout group; else a random test group of --cfg")
+    ap.add_argument("--scene-idx", type=int, default=0, help="[group mode] which scene of the group")
     ap.add_argument("--cam-idx", type=int, default=0)
     ap.add_argument("--n-frames", type=int, default=48)
     ap.add_argument("--fps", type=int, default=12)
@@ -120,16 +137,15 @@ def main():
     args = ap.parse_args()
 
     rng = random.Random(args.seed)
-    group, paths = pick_sequence(args.split_csv, args.cfg, args.group, args.scene_idx,
-                                 args.cam_idx, args.n_frames, args.frames_tmpl, rng)
-    print(f"{group}  scene{args.scene_idx}/cam{args.cam_idx}: {len(paths)} frames", flush=True)
+    name, paths = pick_sequence(args.split_csv, args.cfg, args.task, args.user, args.scene,
+                                args.group, args.scene_idx, args.cam_idx, args.n_frames, args.frames_tmpl, rng)
+    print(f"{name}  cam{args.cam_idx}: {len(paths)} frames", flush=True)
     norm, disp = load_seq(paths)
 
     e0 = load_vitv2(pretrained=True).to(args.device).eval()
     patch = patch_tokens(e0, norm, args.device)
     model, kind = build_encoder(args.ckpt, args.device)
-    _, enc_attn = encoder_panels(model, kind, patch, args.device)          # [N,14,14]
-    enc_attn = global_norm(enc_attn)
+    enc_attn = global_norm(encoder_attention(model, kind, patch, args.device))  # [N,14,14]
     vit_attn = global_norm(vit_attention(e0, norm, args.device)) if args.also_vit else None
 
     frames = []

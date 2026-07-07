@@ -28,13 +28,20 @@ The encoder class is picked from the checkpoint keys (proj_s -> MMPerceiver,
 proj_m -> MMPerceiverChunks). Motor/ee/state are dummy tensors the vision-only pass blocks,
 so their values never reach the vision panels. Samples come from the holdout_v1 TEST split.
 
+Two ways to choose frames:
+  * sampling  — random TEST-split scenes across --cfgs (default), one frame each.
+  * pinned    — an EXACT scene via --cfg --task --user --scene (all four), N time-strided
+                frames from --cam-idx. Frame dirs are task_{t}_user_{u}_scene_{s}_cfg_{c}.
+
+  # sampling mode
   python -m world_tokenizer.pca_viz \
       --ckpt /mnt/nas/data/RH20T/checkpoints/phase1/all/seed0.pt \
       --cfgs 1,3,5 --n-images 6 --out pca_viz_out/chunk_all.png
 
+  # pinned scene (cfg3, task16, user11, scene1)
   python -m world_tokenizer.pca_viz \
-      --ckpt /mnt/nas/data/RH20T/checkpoints/exp-20260704-032544/perceiver_seed0.pt \
-      --cfgs 3 --n-images 6 --out pca_viz_out/stage2_seed0.png
+      --ckpt /mnt/nas/data/RH20T/checkpoints/phase1/all/seed0.pt \
+      --cfg 3 --task 16 --user 11 --scene 1 --n-images 6 --out pca_viz_out/scene.png
 """
 import argparse
 import csv
@@ -95,6 +102,30 @@ def _repr_frame(group, cfg, frames_tmpl):
             if imgs:
                 return imgs[len(imgs) // 2]
     return None
+
+
+def scene_dir(cfg, task, user, scene, frames_tmpl="/mnt/nas/data/RH20T/frames/cfg{cfg}"):
+    """(cfg,task,user,scene) ints -> (dir_name, absolute path). Names are zero-padded to 4."""
+    name = f"task_{int(task):04d}_user_{int(user):04d}_scene_{int(scene):04d}_cfg_{int(cfg):04d}"
+    return name, os.path.join(frames_tmpl.format(cfg=int(cfg)), name)
+
+
+def scene_cam_frames(scene_path, cam_idx=0):
+    """-> (cam color dir, sorted frame paths) for the cam_idx-th camera of a scene dir."""
+    cams = sorted(glob.glob(os.path.join(scene_path, "cam_*", "color")))
+    if not cams:
+        return None, []
+    cam = cams[cam_idx if 0 <= cam_idx < len(cams) else 0]
+    return cam, sorted(glob.glob(os.path.join(cam, "*.jpg")))
+
+
+def pinned_frames(cfg, task, user, scene, n_images, cam_idx, frames_tmpl):
+    """n_images (cfg, scene_name, path) evenly strided across ONE pinned scene/camera's timeline."""
+    name, path = scene_dir(cfg, task, user, scene, frames_tmpl)
+    _, fs = scene_cam_frames(path, cam_idx)
+    assert fs, f"no frames at {path} (cam_idx={cam_idx}) — check --cfg/--task/--user/--scene/--cam-idx"
+    stride = max(1, len(fs) // n_images)
+    return [(cfg, name, p) for p in fs[::stride][:n_images]]
 
 
 # ------------------------------------------------------------------------------- images
@@ -277,7 +308,13 @@ def render(picks, crops, vit_rgb, enc_occ, vit_attn, enc_attn, title, out_path):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--ckpt", required=True, help="trained Perceiver encoder .pt")
-    ap.add_argument("--cfgs", default="3", help="comma list of cfgs to sample from, e.g. 1,3,5")
+    ap.add_argument("--cfgs", default="3", help="[sampling mode] comma list of cfgs, e.g. 1,3,5")
+    # pinned-scene mode: give all four to visualize N time-strided frames of ONE exact scene
+    ap.add_argument("--cfg", type=int, help="pinned scene: config id")
+    ap.add_argument("--task", type=int, help="pinned scene: task id")
+    ap.add_argument("--user", type=int, help="pinned scene: user id")
+    ap.add_argument("--scene", type=int, help="pinned scene: scene id")
+    ap.add_argument("--cam-idx", type=int, default=0, help="pinned scene: which camera (default 0)")
     ap.add_argument("--n-images", type=int, default=6)
     ap.add_argument("--res", type=int, default=448,
                     help="ViT input res for panels A/C: 224->14x14, 448->28x28, 672->42x42. "
@@ -291,13 +328,20 @@ def main():
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = ap.parse_args()
 
-    cfgs = [int(c) for c in args.cfgs.split(",") if c.strip()]
-    rng = random.Random(args.seed)
-    picks = sample_frames(args.split_csv, cfgs, args.n_images, args.frames_tmpl, rng)
-    assert picks, "no frames sampled — check --cfgs / --frames-tmpl / --split-csv"
+    pinned = [args.cfg, args.task, args.user, args.scene]
+    if any(v is not None for v in pinned):
+        assert all(v is not None for v in pinned), "pinned mode needs all of --cfg --task --user --scene"
+        picks = pinned_frames(args.cfg, args.task, args.user, args.scene, args.n_images,
+                              args.cam_idx, args.frames_tmpl)
+        src = f"scene {picks[0][1]} cam{args.cam_idx}"
+    else:
+        cfgs = [int(c) for c in args.cfgs.split(",") if c.strip()]
+        picks = sample_frames(args.split_csv, cfgs, args.n_images, args.frames_tmpl, random.Random(args.seed))
+        assert picks, "no frames sampled — check --cfgs / --frames-tmpl / --split-csv"
+        src = f"cfgs {cfgs} (test split)"
     paths = [p for _, _, p in picks]
     hi = args.res // 16                                                       # ViT patch16 grid side
-    print(f"{len(picks)} frames from cfgs {cfgs} (test split) | ViT panels @ {args.res}px ({hi}x{hi})", flush=True)
+    print(f"{len(picks)} frames from {src} | ViT panels @ {args.res}px ({hi}x{hi})", flush=True)
 
     _, crops = load_batch(paths, 224)                                        # 224 display crop (same FOV as hi-res)
     norm_hi, _ = load_batch(paths, args.res)                                 # hi-res for the frozen-ViT panels
