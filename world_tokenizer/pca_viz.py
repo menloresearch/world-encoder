@@ -284,6 +284,30 @@ def encoder_proj(model, patch, device):
     return (model.proj_v(patch) + model.mod[0]).float().cpu()
 
 
+def load_ft_vit(vit_ckpt, device):
+    """Load a finetuned FULL-ViT checkpoint (LeJEPAVideo state) -> the ViTv2 model used for
+    panels A/C, so those show the robotics-adapted backbone instead of the pretrained e0.
+    (The encoder panels B/D always keep the pretrained e0 the encoder was trained on.)"""
+    from world_tokenizer.model import LeJEPAVideo
+    net = LeJEPAVideo(pretrained=True)
+    ck = torch.load(vit_ckpt, map_location="cpu")
+    sd = ck.get("model", ck) if isinstance(ck, dict) else ck
+    net.load_state_dict(sd, strict=False)
+    return net.backbone.model.to(device).eval()   # ViTv2PretrainedModel: (x, last_self_attention=True) -> dict
+
+
+@torch.no_grad()
+def head_proj_feats(head_ckpt, patch, device):
+    """Frozen-ViT + trained proj_v head (LeJEPAVisionHead): apply its proj_v to the (pretrained
+    e0) patch tokens -> [N,196,dh]. The vision-only-trained analog of the multimodal proj_v."""
+    ck = torch.load(head_ckpt, map_location="cpu")
+    sd = ck.get("model", ck) if isinstance(ck, dict) else ck
+    W, b = sd["proj_v.weight"], sd["proj_v.bias"]
+    lin = torch.nn.Linear(W.shape[1], W.shape[0])
+    lin.weight.data.copy_(W); lin.bias.data.copy_(b)
+    return lin.to(device).eval()(patch.to(device)).float().cpu()
+
+
 # -------------------------------------------------------------------------------- figure
 
 def _norm01(h):
@@ -294,22 +318,33 @@ def _overlay(ax, crop, heat):
     ax.imshow(crop); ax.imshow(_upsample(_norm01(heat)), cmap="inferno", alpha=0.55)
 
 
-def render(picks, crops, vit_rgb, enc_rgb, vit_attn, enc_attn, title, out_path):
+def render(picks, crops, vit_rgb, enc_rgb, vit_attn, enc_attn, title, out_path,
+           head_rgb=None, vit_label=None):
+    """Columns are built dynamically; the vision-head PCA column appears only when a
+    --head-ckpt was given. Each spec is (title, mode, data); mode in img/rgb/overlay."""
     n = len(picks)
-    cols = [f"A · {VIT_NAME} PCA", "B · encoder proj_v PCA", "C · ViT attention", "D · encoder attention"]
-    fig, axes = plt.subplots(n, 5, figsize=(5 * 2.6, n * 2.6), squeeze=False)
+    specs = [("image", "img", None),
+             (f"A · {vit_label or VIT_NAME} PCA", "rgb", vit_rgb),
+             ("B · encoder proj_v PCA", "rgb", enc_rgb)]
+    if head_rgb is not None:
+        specs.append(("E · vision-head proj_v PCA", "rgb", head_rgb))
+    specs += [("C · ViT attention", "overlay", vit_attn),
+              ("D · encoder attention", "overlay", enc_attn)]
+    ncol = len(specs)
+    fig, axes = plt.subplots(n, ncol, figsize=(ncol * 2.6, n * 2.6), squeeze=False)
     for i, (cfg, group, _) in enumerate(picks):
-        axes[i][0].imshow(crops[i])
+        for j, (_, mode, data) in enumerate(specs):
+            ax = axes[i][j]
+            if mode == "img":
+                ax.imshow(crops[i])
+            elif mode == "rgb":
+                ax.imshow(data[i])
+            else:
+                _overlay(ax, crops[i], data[i])
+            ax.set_xticks([]); ax.set_yticks([])
         axes[i][0].set_ylabel(short_label(cfg, group), fontsize=7, rotation=0, ha="right", va="center", labelpad=24)
-        axes[i][1].imshow(vit_rgb[i])
-        axes[i][2].imshow(enc_rgb[i])
-        _overlay(axes[i][3], crops[i], vit_attn[i])
-        _overlay(axes[i][4], crops[i], enc_attn[i])
-        for j in range(5):
-            axes[i][j].set_xticks([]); axes[i][j].set_yticks([])
-    axes[0][0].set_title("image", fontsize=9)
-    for j, c in enumerate(cols):
-        axes[0][j + 1].set_title(c, fontsize=9)
+    for j, (t, _, _) in enumerate(specs):
+        axes[0][j].set_title(t, fontsize=9)
     fig.suptitle(title, fontsize=11, y=0.999)
     fig.tight_layout(rect=(0.02, 0, 1, 0.99))
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
@@ -336,6 +371,10 @@ def main():
                          "Higher = smoother PCA heatmap. Encoder panels B/D stay 224 (trained at 196 tokens).")
     ap.add_argument("--fg-mask", action="store_true",
                     help="DINOv2 recipe for panels A/B: PC1 foreground mask, next-3 PCs -> RGB, white background")
+    ap.add_argument("--vit", help="finetuned FULL-ViT checkpoint (LeJEPAVideo) -> panels A/C use this "
+                    "robotics-adapted backbone instead of pretrained e0 (encoder B/D keep e0)")
+    ap.add_argument("--head-ckpt", help="LeJEPAVisionHead checkpoint -> adds a 'vision-head proj_v PCA' "
+                    "column (frozen e0 + this trained proj_v head)")
     ap.add_argument("--split-csv", default="splits/holdout_v1.csv")
     ap.add_argument("--frames-tmpl", default="/mnt/nas/data/RH20T/frames/cfg{cfg}")
     ap.add_argument("--out", default="pca_viz_out/panels.png")
@@ -365,12 +404,14 @@ def main():
     norm_hi, _ = load_batch(paths, args.res)                                 # hi-res for the frozen-ViT panels
     norm_lo, _ = load_batch(paths, 224)                                      # 224 (196 tokens) for the encoder
 
-    e0 = load_vitv2(pretrained=True).to(args.device).eval()
+    e0 = load_vitv2(pretrained=True).to(args.device).eval()                  # pretrained backbone (encoder + default A/C)
+    vit_model = load_ft_vit(args.vit, args.device) if args.vit else e0       # panels A/C backbone
+    vit_label = os.path.basename(args.vit) if args.vit else VIT_NAME
     with torch.no_grad(), torch.autocast(args.device, dtype=torch.bfloat16, enabled=args.device == "cuda"):
-        out = e0(norm_hi.to(args.device), last_self_attention=True)
+        out = vit_model(norm_hi.to(args.device), last_self_attention=True)   # panels A (PCA) + C (attention)
         patch_hi = out["patch_latent"].float().cpu()                         # [N,hi*hi,768]
         vit_attn = out["last_self_attention"].float().mean(1)                # [N,heads,hi*hi] -> [N,hi*hi]
-        patch_lo = e0(norm_lo.to(args.device))["patch_latent"].float().cpu()  # [N,196,768] for the encoder
+        patch_lo = e0(norm_lo.to(args.device))["patch_latent"].float().cpu()  # [N,196,768] pretrained -> encoder + head
     vit_attn = vit_attn.reshape(len(picks), hi, hi).cpu().numpy()
 
     model, kind = build_encoder(args.ckpt, args.device)
@@ -379,9 +420,13 @@ def main():
 
     vit_rgb = pca_rgb(patch_hi, fg_mask=args.fg_mask)                        # panel A: smooth, hi-res
     enc_rgb = pca_rgb(proj, fg_mask=args.fg_mask)                            # panel B: same PCA method as A
+    head_rgb = None
+    if args.head_ckpt:                                                       # panel E: frozen e0 + trained head proj_v
+        head_rgb = pca_rgb(head_proj_feats(args.head_ckpt, patch_lo, args.device), fg_mask=args.fg_mask)
     title = (f"{os.path.basename(os.path.dirname(args.ckpt))}/{os.path.basename(args.ckpt)}  "
-             f"({kind}, ViT={VIT_NAME}@{args.res})")
-    render(picks, crops, vit_rgb, enc_rgb, vit_attn, enc_attn, title, args.out)
+             f"({kind}, ViT={vit_label}@{args.res})")
+    render(picks, crops, vit_rgb, enc_rgb, vit_attn, enc_attn, title, args.out,
+           head_rgb=head_rgb, vit_label=vit_label)
 
 
 if __name__ == "__main__":
