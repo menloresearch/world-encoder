@@ -12,7 +12,7 @@ run is mid-flight).
 | **Stage 2** — single-timestep modality fusion (cfg3, cfg3+4) | fusion works in principle: z_v 0.65 > raw 0.52 | ✅ done |
 | **Phase 1** — full-RH20T 5×4 transfer matrix | *one encoder for all robots*, at scale | 🔄 running (ablations/triplet still owed) |
 | **Phase 2** — Temporal | **the core architectural bet**: multi-rate streams fused by real time | ⬜ next (critical path) |
-| **Phase 3** — Decoder | *shows* what the latent knows (probe/demo, not a proof) | ⬜ parallel track (JQ/Alex) |
+| **Phase 3** — Decoder | *shows* what the latent knows (probe/demo, not a proof) | ⬜ parallel track |
 | **Loss #4** — action-conditioned forward prediction | causality (correlation → cause) | ⬜ after Phase-2 gate |
 | **Stage 5** — Audio · **Stage 7** — dual-arm/microfactory | more modalities / embodiments | ⬜ later, gated |
 | **FLARE / GR00T** — our encoder as frozen g(·) | external downstream validation | ⬜ opportunistic |
@@ -40,7 +40,7 @@ win, joints marginal).
   (instantaneous) but barely helped joints (motion needs time). Data side is already done
   (tick-anchored chunks, native-rate windows, `ts` cached per token) → **model-side work
   only**: continuous-time embedding + multi-tick windows + mask over (modality × time). This
-  is where JQ's **200 ms chunk + 1D-CNN proprioception** feedback slots in.
+  is where the **200 ms chunk + 1D-CNN proprioception** design slots in.
 - **Decoder (Phase 3)** does *not* prove the architecture — it's a "superpowered linear
   probe" that visualizes/quantifies what's already in the latent (later, a compression demo).
   Runs on frozen Phase-1 latents → proceeds in parallel, doesn't block temporal.
@@ -58,7 +58,7 @@ win, joints marginal).
 *architecture* means proving it across *time* — that's Phase 2, and it's next. The decoder
 is a parallel demo, not a proof.
 
-## Phase-2 temporal design — decisions (2026-07-07, w/ JQ + friend input)
+## Phase-2 temporal design — decisions (2026-07-07)
 
 The problem, stated right: **irregular multivariate time series → compact latent, via
 PerceiverIO; the crux is the time/position encoding.** Time goes *in the token, not the grid*
@@ -78,7 +78,7 @@ PerceiverIO; the crux is the time/position encoding.** Time goes *in the token, 
 - **RoPE / VideoRoPE:** secondary — only if we add temporal self-attention among latents, and
   then the *continuous* (real-Δt) variant, not integer-index RoPE.
 
-**Per-stream tokenizers (JQ / friend's 1D-CNN, placed correctly):**
+**Per-stream tokenizers (the 1D-CNN, placed correctly):**
 - **Dense F/T stream (~100–125 Hz):** a **1D-CNN** is the right tokenizer (kernel-16 → 128 is a
   fine start). It's locally near-regular within a chunk, so CNN is ideal *here* — this is the
   proper home for "flatten the 8×3 grid, conv over time." Keep mask as extra channels (24 vals
@@ -97,11 +97,11 @@ PerceiverIO; the crux is the time/position encoding.** Time goes *in the token, 
 held-out-time / future latents; eval = future force/contact at varying Δt vs single-timestep.
 
 **The decisive ablation:** continuous-time (no resample) **vs** resample-everything + 1D-CNN
-(JQ's world). This either validates or kills the white-space claim — build both; if
-continuous-time doesn't beat resample+CNN, adopt the simpler thing honestly.
+(the classical DSP approach). This either validates or kills the white-space claim — build
+both; if continuous-time doesn't beat resample+CNN, adopt the simpler thing honestly.
 
-## Open decisions (from PLAN.md, need JQ)
+## Open decisions (from PLAN.md)
 Camera choice v1 (fixed external, wrist excluded — already applied in code); file ownership
-(trainer vs triplet wiring both touch JQ's code); cfg5 stays with ee masked; push JQ's
-unpushed local commits; LICENSE (repo public without one); merge direction (Phase-1 builds on
-`user/jiaqi`; `user/ishneet` is stale).
+(trainer vs triplet wiring both touch the shared pipeline code); cfg5 stays with ee masked;
+push the outstanding unpushed local commits; LICENSE (repo public without one); merge
+direction (Phase-1 builds on `user/jiaqi`; `user/ishneet` is stale).
