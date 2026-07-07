@@ -6,7 +6,7 @@ METRICS.md there). Supersedes the 2026-07-03 PLAN (kept in git history). Project
 
 ## What changed since the last PLAN (2026-07-03 → 2026-07-06)
 
-Done over the weekend (mostly Jia Qi, on `user/jiaqi`):
+Done over the weekend (on `user/jiaqi`):
 
 - **Preprocessing (was A/B):** all 7 cfgs extracted + sharded on the NAS (54.3M frame
   samples, ~4 TB). `DATA.md` is the per-cfg audit (joint layouts, `_human_2` trap,
@@ -82,7 +82,7 @@ single timestep, masking over MODALITY. Do NOT unfreeze vision (Stage-1 evidence
       ur5=cfg3+4 2,993, franka=cfg5 1,321, kuka=cfg6+7 2,402) + 1 joint all-7 encoder,
       multi-seed, frozen split. Evaluate every encoder on every embodiment's held-out
       groups → 5×4 transfer matrix. This settles "one encoder vs per-embodiment"
-      empirically — Jia Qi's de-risking and the one-encoder thesis in a single run —
+      empirically — the cross-embodiment de-risking and the one-encoder thesis in a single run —
       and is the headline blog figure.
 - [ ] **1.6** Claims-protection ablations (cfg3-scale, cheap, BEFORE anything goes
       external): vision-only-*trained* Perceiver (isolates the cross-modal gain — still
@@ -111,7 +111,7 @@ ticks (6.7–14.7 Hz), `ts` cached per chunk. Remaining work is model-side only:
 **Gate:** temporal masking beats single-timestep on future-state prediction with RankMe
 stable. Loss #4 (action-conditioned forward prediction) only after this gate.
 
-## Phase 3 — Decoder (parallel track; Jia Qi / Alex)
+## Phase 3 — Decoder (parallel track)
 
 - [ ] **3.1** robot_state decoder on frozen Phase-1 latents — "the generative decoder is
       our superpowered linear probe": quantifies latent content, cheap, days not weeks.
@@ -134,14 +134,14 @@ Phase-1 encoder. Prep notes: `~/brain/ishneet/youliangtan-papers.md` (kept out o
 
 | item | trigger |
 |---|---|
-| Multi-view training objective | Phase-1 analysis: measure same-tick cross-view latent distance with the v1 encoder. If views don't already cluster → add cross-VIEW masked prediction (predict side-view latent from wrist-view + state). Predict-don't-equate — never latent *equality* across views (dual-arm / wrist-cam info-asymmetry objection). Include latent **sum/mean-pool of per-view latents as the fusion baseline** (JQ's neural-codec idea — the additive trick itself doesn't transfer: audio mixes additively at the sensor and codecs are near-lossless, cameras are projections and JEPA latents are lossy by design — but it's the right dumb baseline vs Perceiver fusion with view-tagged tokens). |
+| Multi-view training objective | Phase-1 analysis: measure same-tick cross-view latent distance with the v1 encoder. If views don't already cluster → add cross-VIEW masked prediction (predict side-view latent from wrist-view + state). Predict-don't-equate — never latent *equality* across views (dual-arm / wrist-cam info-asymmetry objection). Include latent **sum/mean-pool of per-view latents as the fusion baseline** (the neural-codec idea — the additive trick itself doesn't transfer: audio mixes additively at the sensor and codecs are near-lossless, cameras are projections and JEPA latents are lossy by design — but it's the right dumb baseline vs Perceiver fusion with view-tagged tokens). |
 | Loss #4 (action-conditioned) | Phase-2 gate passes (needs temporal machinery). |
 | Audio (full Stage 5) | Temporal proven. |
 | Discrete latent / disentanglement; dual-arm embedding-sum | Microfactory data (Stage 7) — RH20T is single-arm. |
 | Loss balancing (Kendall / GradBlend) | Only if the 3-loss balance misbehaves at scale (it hasn't). |
 | Theory reading | Rate-distortion → when sizing the bottleneck ablation; PID/synergy → when interpreting the transfer matrix; identifiability/causality → Phase 2+ with actions. |
 
-## Decisions to confirm with Jia Qi (blocking)
+## Decisions to confirm (blocking)
 
 1. Camera choice v1 = fixed external cam, wrist excluded (proposed above).
 2. File ownership: trainer (Ishneet) vs triplet-selection wiring — both touch his code.
