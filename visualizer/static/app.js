@@ -106,11 +106,28 @@ function prettyScene(name) {
   return m ? `task ${m[1]} · user ${m[2]} · scene ${m[3]}` : name;
 }
 
+// pull the numeric task/user/scene fields out of a scene name; null if it doesn't
+// match the schema. "task_0001_user_0016_scene_0001_cfg_0003" -> {task:1, user:16, scene:1}
+function sceneFields(name) {
+  const m = name.match(/^task_(\d+)_user_(\d+)_scene_(\d+)_cfg_\d+$/);
+  return m ? { task: +m[1], user: +m[2], scene: +m[3] } : null;
+}
+
+const FILTER_IDS = ["#f-task", "#f-user", "#f-scene"];
+
 function renderSceneList() {
-  const q = $("#scene-search").value.trim().toLowerCase();
+  // one number box per column; blank box = that column is unconstrained
+  const [wTask, wUser, wScene] = FILTER_IDS.map((id) => parseInt($(id).value, 10));
   const list = $("#scene-list");
   list.textContent = "";
-  const matches = state.scenes.filter((s) => s.toLowerCase().includes(q));
+  const matches = state.scenes.filter((s) => {
+    if (Number.isNaN(wTask) && Number.isNaN(wUser) && Number.isNaN(wScene)) return true;
+    const f = sceneFields(s);
+    if (!f) return false;
+    return (Number.isNaN(wTask) || f.task === wTask) &&
+           (Number.isNaN(wUser) || f.user === wUser) &&
+           (Number.isNaN(wScene) || f.scene === wScene);
+  });
   $("#scene-count").textContent =
     `${matches.length} of ${state.scenes.length} scenes`;
   const frag = document.createDocumentFragment();
@@ -123,7 +140,7 @@ function renderSceneList() {
   }
   list.append(frag);
 }
-$("#scene-search").addEventListener("input", renderSceneList);
+for (const id of FILTER_IDS) $(id).addEventListener("input", renderSceneList);
 
 async function selectScene(name) {
   stopPlayback();

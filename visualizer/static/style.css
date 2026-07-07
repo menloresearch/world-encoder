@@ -109,9 +109,12 @@ main { height: calc(100vh - 45px); }
 }
 .pill .n { opacity: 0.7; font-size: 11px; }
 
-#scene-search {
+.scene-filters { display: flex; gap: 6px; }
+.col-filter {
   font: inherit;
-  padding: 6px 10px;
+  min-width: 0;
+  flex: 1;
+  padding: 6px 8px;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--page);
