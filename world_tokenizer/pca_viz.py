@@ -5,10 +5,14 @@ relationships"). Our trained encoders pool 8 Perceiver queries into a single vec
 (``PerceiverFuse`` ends in ``x.mean(1)``) — there is no patch grid at the output — so we
 show four patch-aligned panels per image, arranged as baseline-vs-ours pairs:
 
-  A  ViT PCA-RGB     — frozen e0 ``patch_latent`` (196x768) -> PCA(3) -> RGB overlay.
-                       The paper's exact experiment; model-independent reference.
-  B  encoder PCA-RGB — ``proj_v(patch) + mod[0]`` (196xd) -> PCA(3) -> RGB overlay. PCA of
-                       *our* latents (proj_v is one linear layer re-mixing the ViT patches).
+  A  ViT PCA-RGB     — frozen e0 ``patch_latent`` -> PCA -> RGB. The paper's experiment.
+                       Run at high --res for a fine patch grid (448->28x28, 672->42x42) so
+                       the heatmap is smooth like LeJEPA's (their look = many tokens +
+                       bicubic upsample, DINOv2 recipe; there is no viz code in their repo).
+  B  encoder PCA-RGB — ``proj_v(patch) + mod[0]`` (196xd) -> PCA -> RGB. PCA of *our* latents
+                       (proj_v re-mixes the ViT patches). Fixed at 14x14: the encoder's
+                       _context/_attn_mask hardcode 196 vision tokens, so it can't take
+                       a higher-res grid — only the frozen-ViT panels (A, C) scale with --res.
   C  ViT attention   — e0 last-layer CLS->patch self-attention (DINO-style), heads averaged.
   D  encoder attention — vision-only fuse pass; softmax(q.k^T) of the 8 queries over the
                        196 vision patches. What our fused bottleneck READS from the image.
@@ -89,9 +93,11 @@ def _repr_frame(group, cfg, frames_tmpl):
 
 # ------------------------------------------------------------------------------- images
 
-def load_batch(paths):
-    """-> (normalized [N,3,224,224] for the model, display crops [N,224,224,3] in 0..1)."""
-    tf = T.Compose([T.Resize(256), T.CenterCrop(224), T.ToTensor()])
+def load_batch(paths, res=224):
+    """-> (normalized [N,3,res,res] for the model, display crops [N,res,res,3] in 0..1).
+    Resize(res*8/7)+CenterCrop(res) keeps the SAME field of view at any res, so higher-res
+    patch grids overlay the 224 display crop 1:1."""
+    tf = T.Compose([T.Resize(round(res * 8 / 7)), T.CenterCrop(res), T.ToTensor()])
     crops = torch.stack([tf(Image.open(p).convert("RGB")) for p in paths])
     return (crops - _NORM_M) / _NORM_S, crops.permute(0, 2, 3, 1).numpy()
 
@@ -106,17 +112,35 @@ def _upsample(grid, size=224, mode=Image.BICUBIC):
 
 # ---------------------------------------------------------------------------------- PCA
 
-def pca_rgb(feats):
-    """feats [N,196,C] -> [N,224,224,3] uint8. Joint PCA(3) across all patches for
-    cross-image color comparability; robust per-channel 2-98 percentile normalization."""
+def pca_rgb(feats, fg_mask=False):
+    """feats [N,P,C] -> [N,224,224,3] uint8 (grid inferred as sqrt(P)). Joint PCA across
+    all patches for cross-image color comparability; robust 2-98 percentile normalization;
+    bicubic upsample. DINOv2 recipe: with fg_mask, threshold PC1 to a foreground mask, map
+    the NEXT 3 PCs to RGB, and paint background white — the clean 'semantic' look. Without
+    it, the top-3 PCs go straight to RGB. Smoothness comes mostly from a fine grid (high
+    --res), not from this function."""
     N, P, C = feats.shape
+    grid = int(round(P ** 0.5))
     flat = feats.reshape(-1, C).float()
     flat = flat - flat.mean(0, keepdim=True)
     _, _, V = torch.linalg.svd(flat, full_matrices=False)        # right singular vecs = principal axes
-    proj = (flat @ V[:3].T).reshape(N, P, 3).numpy()             # project onto top-3
-    lo, hi = np.percentile(proj, 2, axis=(0, 1)), np.percentile(proj, 98, axis=(0, 1))
-    proj = np.clip((proj - lo) / np.maximum(hi - lo, 1e-6), 0, 1)
-    out = np.stack([_upsample(proj[i].reshape(GRID, GRID, 3)) for i in range(N)])
+    proj = (flat @ V[:4].T).numpy()                              # top-4: PC1 (mask) + PC2-4 (rgb)
+    if fg_mask:
+        pc1 = proj[:, 0]
+        pc1 = (pc1 - pc1.min()) / max(pc1.max() - pc1.min(), 1e-6)
+        m = pc1 > 0.5
+        if m.mean() > 0.5:                                       # treat the smaller side as foreground
+            m = ~m
+        if not (0.05 < m.mean() < 0.95):                         # degenerate split -> skip masking
+            m = np.ones(len(proj), bool)
+        rgb_src = proj[:, 1:4]
+    else:
+        m = np.ones(len(proj), bool)
+        rgb_src = proj[:, :3]
+    lo, hi = np.percentile(rgb_src[m], 2, axis=0), np.percentile(rgb_src[m], 98, axis=0)
+    rgb = np.clip((rgb_src - lo) / np.maximum(hi - lo, 1e-6), 0, 1)
+    rgb[~m] = 1.0                                                # background -> white
+    out = np.stack([_upsample(rgb[i * P:(i + 1) * P].reshape(grid, grid, 3)) for i in range(N)])
     return (out * 255).astype(np.uint8)
 
 
@@ -218,6 +242,11 @@ def main():
     ap.add_argument("--ckpt", required=True, help="trained Perceiver encoder .pt")
     ap.add_argument("--cfgs", default="3", help="comma list of cfgs to sample from, e.g. 1,3,5")
     ap.add_argument("--n-images", type=int, default=6)
+    ap.add_argument("--res", type=int, default=448,
+                    help="ViT input res for panels A/C: 224->14x14, 448->28x28, 672->42x42. "
+                         "Higher = smoother PCA heatmap. Encoder panels B/D stay 224 (trained at 196 tokens).")
+    ap.add_argument("--fg-mask", action="store_true",
+                    help="DINOv2 recipe for panels A/B: PC1 foreground mask, next-3 PCs -> RGB, white background")
     ap.add_argument("--split-csv", default="splits/holdout_v1.csv")
     ap.add_argument("--frames-tmpl", default="/mnt/nas/data/RH20T/frames/cfg{cfg}")
     ap.add_argument("--out", default="pca_viz_out/panels.png")
@@ -229,23 +258,28 @@ def main():
     rng = random.Random(args.seed)
     picks = sample_frames(args.split_csv, cfgs, args.n_images, args.frames_tmpl, rng)
     assert picks, "no frames sampled — check --cfgs / --frames-tmpl / --split-csv"
-    print(f"{len(picks)} frames from cfgs {cfgs} (test split)", flush=True)
+    paths = [p for _, _, p in picks]
+    hi = args.res // 16                                                       # ViT patch16 grid side
+    print(f"{len(picks)} frames from cfgs {cfgs} (test split) | ViT panels @ {args.res}px ({hi}x{hi})", flush=True)
 
-    norm, crops = load_batch([p for _, _, p in picks])
+    _, crops = load_batch(paths, 224)                                        # 224 display crop (same FOV as hi-res)
+    norm_hi, _ = load_batch(paths, args.res)                                 # hi-res for the frozen-ViT panels
+    norm_lo, _ = load_batch(paths, 224)                                      # 224 (196 tokens) for the encoder
 
     e0 = load_vitv2(pretrained=True).to(args.device).eval()
     with torch.no_grad(), torch.autocast(args.device, dtype=torch.bfloat16, enabled=args.device == "cuda"):
-        out = e0(norm.to(args.device), last_self_attention=True)
-        patch = out["patch_latent"].float().cpu()                            # [N,196,768]
-        vit_attn = out["last_self_attention"].float().mean(1)                # [N,heads,196] -> [N,196]
-    vit_attn = vit_attn.reshape(len(picks), GRID, GRID).cpu().numpy()
+        out = e0(norm_hi.to(args.device), last_self_attention=True)
+        patch_hi = out["patch_latent"].float().cpu()                         # [N,hi*hi,768]
+        vit_attn = out["last_self_attention"].float().mean(1)                # [N,heads,hi*hi] -> [N,hi*hi]
+        patch_lo = e0(norm_lo.to(args.device))["patch_latent"].float().cpu()  # [N,196,768] for the encoder
+    vit_attn = vit_attn.reshape(len(picks), hi, hi).cpu().numpy()
 
     model, kind = build_encoder(args.ckpt, args.device)
-    proj, enc_attn = encoder_panels(model, kind, patch, args.device)
+    proj, enc_attn = encoder_panels(model, kind, patch_lo, args.device)
 
-    vit_rgb = pca_rgb(patch)
-    enc_rgb = pca_rgb(proj)
-    title = f"{os.path.basename(os.path.dirname(args.ckpt))}/{os.path.basename(args.ckpt)}  ({kind})"
+    vit_rgb = pca_rgb(patch_hi, fg_mask=args.fg_mask)                        # smooth, hi-res
+    enc_rgb = pca_rgb(proj, fg_mask=args.fg_mask)                            # 14x14 (encoder is fixed at 196 tokens)
+    title = f"{os.path.basename(os.path.dirname(args.ckpt))}/{os.path.basename(args.ckpt)}  ({kind}, ViT@{args.res})"
     render(picks, crops, vit_rgb, enc_rgb, vit_attn, enc_attn, title, args.out)
 
 
