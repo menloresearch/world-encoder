@@ -136,7 +136,33 @@ signals from the given feature; higher = better, scene-held-out):
     mean-pooled), no fusion. The bar `z_v` must beat to show cross-modal gain.
 - **—** = not applicable: franka (cfg5) has no F/T sensor, so it has no ee targets.
 
-RankMe (`z_v`) 142–193 across the board — no collapse (flexiv specialist ±48: one seed dipped).
+**RankMe of `z_v`** (effective rank / collapse detector, `exp(entropy of normalized singular
+values)`; measured on each robot's held-out `z_v`, mean ±std over 5 seeds — the ALL run has since
+completed all 5 seeds, so the R² diagonal above is due a refresh from the same `results.json`):
+
+| robot | ALL z_v RankMe | spec z_v RankMe |
+|---|---|---|
+| flexiv | 171.1 ±32.6 | 161.5 ±48.1 |
+| ur5 | 171.9 ±31.4 | 177.1 ±2.8 |
+| kuka | 166.1 ±27.8 | 142.4 ±7.3 |
+| franka | 174.0 ±30.9 | 146.6 ±2.6 |
+
+**Baseline / how to read it.** RankMe has no learned baseline — it's a self-referential diagnostic
+bounded by `[1, latent_dim]`. `z_v` is 256-dim (Perceiver pools its 8 queries), so:
+- **Ceiling = 256** — a perfectly uniform singular-value spectrum (every direction used equally,
+  zero collapse). Unreachable in practice; real healthy encoders sit well below it.
+- **Floor → 1** — total dimensional collapse (all variance in one direction).
+- **Healthy band observed here ≈ 165–180** (≈0.65–0.70 of ceiling) — no collapse. The ALL numbers
+  are the *same* encoder scored on each robot's test set, so the small flexiv→franka spread is the
+  test set, not four encoders.
+
+RankMe scales with dimensionality, so these are **not** comparable to the 768-dim raw-ViT features
+(whose ceiling is 768) — only within the 256-dim `z_v` family.
+
+The wide ±std on **ALL** and the **flexiv specialist** is one outlier seed each that partially
+collapsed (ALL seed → 106, flexiv-spec seed → 66); the other four seeds of each sit ≈178–190. All
+other runs are tight (±≤9). Not a systematic collapse — a per-seed training instability worth a
+re-run, not a red flag on the recipe.
 
 **Findings (preliminary):**
 - **Force/EE = the clean cross-modal win.** ALL `z_v` beats raw vision on the F/T + pose
