@@ -9,16 +9,22 @@ show four patch-aligned panels per image, arranged as baseline-vs-ours pairs:
                        Run at high --res for a fine patch grid (448->28x28, 672->42x42) so
                        the heatmap is smooth like LeJEPA's (their look = many tokens +
                        bicubic upsample, DINOv2 recipe; there is no viz code in their repo).
-  B  encoder PCA-RGB — ``proj_v(patch) + mod[0]`` (196xd) -> PCA -> RGB. PCA of *our* latents
-                       (proj_v re-mixes the ViT patches). Fixed at 14x14: the encoder's
-                       _context/_attn_mask hardcode 196 vision tokens, so it can't take
-                       a higher-res grid — only the frozen-ViT panels (A, C) scale with --res.
+  B  latent contribution — the encoder COMPRESSES all patches into one non-spatial vector z
+                       (PerceiverFuse ends in x.mean(1)), so there is no latent to paint per
+                       patch. Instead we map each patch's contribution to z by leave-one-out
+                       occlusion: ||z - z_without_patch_i||. This is the honest 'relate the
+                       compressed latent back to image patches', and ~= attention (a causal
+                       cross-check). (An earlier version faked a spatial PCA of proj_v's
+                       pre-fusion output — dropped, since that visualized the input projection,
+                       not the compressed latent.)
   C  ViT attention   — e0 last-layer CLS->patch self-attention (DINO-style), heads averaged.
   D  encoder attention — vision-only fuse pass; softmax(q.k^T) of the 8 queries over the
                        196 vision patches. What our fused bottleneck READS from the image.
 
-A|B compare PCA structure (baseline vs ours); C|D compare where attention lands (baseline
-vs ours). The encoder class is picked from the checkpoint keys (proj_s -> MMPerceiver,
+A is the PCA baseline; B, D are two views of the compressed latent's spatial footprint
+(occlusion vs raw attention — they should agree); C is the baseline attention. The encoder
+runs at 224 (196 tokens, hardcoded in _context/_attn_mask); only A and C scale with --res.
+The encoder class is picked from the checkpoint keys (proj_s -> MMPerceiver,
 proj_m -> MMPerceiverChunks). Motor/ee/state are dummy tensors the vision-only pass blocks,
 so their values never reach the vision panels. Samples come from the holdout_v1 TEST split.
 
@@ -185,13 +191,10 @@ def fuse_with_attn(fuse: PerceiverFuse, context, attn_mask):
     return x.mean(1), last
 
 
-@torch.no_grad()
-def encoder_panels(model, kind, patch, device):
-    """-> (proj_v patch tokens [N,196,d] for panel B, vision attention heat [N,14,14] for D).
-    The fuse pass hides all non-vision modalities, matching the eval latent z_v."""
-    patch = patch.to(device)
+def _vision_ctx_mask(model, kind, patch, device):
+    """Vision-only fuse context + attn mask (all non-vision modalities hidden), matching the
+    eval latent z_v. -> (ctx [B,T,d], mask [B,M,T] or [M,T])."""
     B = patch.shape[0]
-    proj = model.proj_v(patch) + model.mod[0]                                # [B,196,d]
     if kind == "mm":
         ctx = model._context(patch, torch.zeros(B, 28, device=device))       # state dummy (blocked)
         mask = model._mask(block_state=True, device=device)                  # [M,197] state hidden
@@ -202,9 +205,39 @@ def encoder_panels(model, kind, patch, device):
         mask = model._attn_mask(torch.zeros(B, 8, dtype=torch.bool, device=device),
                                 torch.zeros(B, 13, dtype=torch.bool, device=device),
                                 hide=("m", "e"))                             # motor+ee hidden
+    return ctx, mask
+
+
+@torch.no_grad()
+def encoder_attention(model, kind, patch, device):
+    """Panel D: vision cross-attention heat [N,14,14] (queries -> patches, heads+queries avg)."""
+    patch = patch.to(device)
+    ctx, mask = _vision_ctx_mask(model, kind, patch, device)
     _, attn = fuse_with_attn(model.fuse, ctx, mask)                          # [B,H,M,T]
-    heat = attn[..., :GRID * GRID].mean(1).mean(1)                           # 196 vision cols, over heads+queries
-    return proj.float().cpu(), heat.reshape(B, GRID, GRID).float().cpu().numpy()
+    heat = attn[..., :GRID * GRID].mean(1).mean(1)                           # 196 vision cols
+    return heat.reshape(patch.shape[0], GRID, GRID).float().cpu().numpy()
+
+
+@torch.no_grad()
+def latent_occlusion(model, kind, patch, device):
+    """Panel B: per-patch contribution to the COMPRESSED latent z, ||z - z_without_patch_i||
+    (leave-one-out on the fuse). The honest 'relate the non-spatial bottleneck back to
+    patches': z has no patch index, but removing patch i and re-pooling measures how much it
+    moves. Turns out ~= attention (a causal cross-check). -> [N,14,14]."""
+    patch = patch.to(device)
+    P = GRID * GRID
+    idx = torch.arange(P, device=device)
+    maps = []
+    for n in range(patch.shape[0]):
+        ctx, mask = _vision_ctx_mask(model, kind, patch[n:n + 1], device)    # ctx [1,T,d]
+        if mask.dim() == 2:
+            mask = mask.unsqueeze(0)                                         # -> [1,M,T]
+        z_full = model.fuse(ctx, mask)                                       # [1,d]
+        occ = mask.expand(P, -1, -1).clone()                                # [P,M,T]
+        occ[idx, :, idx] = True                                             # variant i also hides patch i
+        z_occ = model.fuse(ctx.expand(P, -1, -1), occ)                      # [P,d]
+        maps.append((z_occ - z_full).norm(dim=-1).reshape(GRID, GRID).float().cpu().numpy())
+    return np.stack(maps)
 
 
 # -------------------------------------------------------------------------------- figure
@@ -213,17 +246,21 @@ def _norm01(h):
     return (h - h.min()) / max(h.max() - h.min(), 1e-8)
 
 
-def render(picks, crops, vit_rgb, enc_rgb, vit_attn, enc_attn, title, out_path):
+def _overlay(ax, crop, heat):
+    ax.imshow(crop); ax.imshow(_upsample(_norm01(heat)), cmap="inferno", alpha=0.55)
+
+
+def render(picks, crops, vit_rgb, enc_occ, vit_attn, enc_attn, title, out_path):
     n = len(picks)
-    cols = ["A · ViT PCA", "B · encoder PCA", "C · ViT attention", "D · encoder attention"]
+    cols = ["A · ViT PCA", "B · latent contribution (occlusion)", "C · ViT attention", "D · encoder attention"]
     fig, axes = plt.subplots(n, 5, figsize=(5 * 2.6, n * 2.6), squeeze=False)
     for i, (cfg, group, _) in enumerate(picks):
         axes[i][0].imshow(crops[i])
         axes[i][0].set_ylabel(f"cfg{cfg}\n{group[:22]}", fontsize=7, rotation=0, ha="right", va="center", labelpad=28)
         axes[i][1].imshow(vit_rgb[i])
-        axes[i][2].imshow(enc_rgb[i])
-        axes[i][3].imshow(crops[i]); axes[i][3].imshow(_upsample(_norm01(vit_attn[i])), cmap="inferno", alpha=0.55)
-        axes[i][4].imshow(crops[i]); axes[i][4].imshow(_upsample(_norm01(enc_attn[i])), cmap="inferno", alpha=0.55)
+        _overlay(axes[i][2], crops[i], enc_occ[i])
+        _overlay(axes[i][3], crops[i], vit_attn[i])
+        _overlay(axes[i][4], crops[i], enc_attn[i])
         for j in range(5):
             axes[i][j].set_xticks([]); axes[i][j].set_yticks([])
     axes[0][0].set_title("image", fontsize=9)
@@ -275,12 +312,12 @@ def main():
     vit_attn = vit_attn.reshape(len(picks), hi, hi).cpu().numpy()
 
     model, kind = build_encoder(args.ckpt, args.device)
-    proj, enc_attn = encoder_panels(model, kind, patch_lo, args.device)
+    enc_attn = encoder_attention(model, kind, patch_lo, args.device)        # panel D
+    enc_occ = latent_occlusion(model, kind, patch_lo, args.device)          # panel B (latent->patch contribution)
 
-    vit_rgb = pca_rgb(patch_hi, fg_mask=args.fg_mask)                        # smooth, hi-res
-    enc_rgb = pca_rgb(proj, fg_mask=args.fg_mask)                            # 14x14 (encoder is fixed at 196 tokens)
+    vit_rgb = pca_rgb(patch_hi, fg_mask=args.fg_mask)                        # panel A: smooth, hi-res
     title = f"{os.path.basename(os.path.dirname(args.ckpt))}/{os.path.basename(args.ckpt)}  ({kind}, ViT@{args.res})"
-    render(picks, crops, vit_rgb, enc_rgb, vit_attn, enc_attn, title, args.out)
+    render(picks, crops, vit_rgb, enc_occ, vit_attn, enc_attn, title, args.out)
 
 
 if __name__ == "__main__":
