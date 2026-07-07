@@ -1,134 +1,152 @@
-# PLAN — Open-source + Full-RH20T Vis+State Training Run
+# PLAN v2 — Full-RH20T Vis+State Matrix Run → Temporal → Decoder
 
-Working plan for Ishneet + Jia Qi. Do the execution **on the new VM** — this doc is the checklist.
-Context/state in [HANDOFF.md](HANDOFF.md); Stage-2 result in [EXPERIMENTS.md](EXPERIMENTS.md).
+Rewritten 2026-07-06 after the weekend's work landed on `user/jiaqi` (see DATA.md /
+METRICS.md there). Supersedes the 2026-07-03 PLAN (kept in git history). Project context in
+[HANDOFF.md](HANDOFF.md); results in [EXPERIMENTS.md](EXPERIMENTS.md).
 
-## Deadlines
-- **By end of tomorrow:** `world-encoder` repo goes **public**.
-- **Over the weekend:** full training run of the **Vis+State encoder** on the **full RH20T** train set.
+## What changed since the last PLAN (2026-07-03 → 2026-07-06)
 
-## Scope of this run — the whole encoder EXCEPT the decoder (and except temporal, for now)
-**IN:** full RH20T · vision + state · robot-agnostic 16-dim state · frozen `e0` vision + Perceiver
-fusion · **single-timestep** · masked-latent-prediction(modality) + per-modal SIGReg + joint SIGReg ·
-sharded data pipeline · fixed train/test split · eval · PCA/embedding viz · repo cleanup for public.
+Done over the weekend (mostly Jia Qi, on `user/jiaqi`):
 
-**OUT (later stages, deliberately not in this run):**
-| excluded | when |
+- **Preprocessing (was A/B):** all 7 cfgs extracted + sharded on the NAS (54.3M frame
+  samples, ~4 TB). `DATA.md` is the per-cfg audit (joint layouts, `_human_2` trap,
+  57 scenes missing joint.npy, cfg5 has no physical F/T, tick timing).
+- **Robot-agnostic state (was A1's locked "16-dim"):** SUPERSEDED by the tick-anchored
+  chunk packet (`chunk_state.py`): motor (8×3, masked — keeps joints via sin/cos q +
+  symlog dq instead of dropping them) + ee (13×15 native-rate F/T+TCP, masked) +
+  robot_id + ts. Strictly better than the 16-dim design; this doc locks the packet instead.
+- **Split (was C1/C2):** frozen `splits/holdout_v1.csv`, held out by (cfg, task, user)
+  group, stratified per cfg; `dataloader.py` enforces it and errors on unknown groups.
+- **Metrics (was C3):** `metrics/metrics.py` — triplet accuracy, RankMe, probe R²,
+  distance correlation, alignment/uniformity. Open: pair/triplet *selection* wiring.
+- **Viz (was D):** `visualizer/` local website. (`visualize_stage2.py` was deleted on
+  `user/jiaqi` — decide: resurrect for the PCA blog figures, or extend visualizer.)
+- **Open-source (was E):** repo is PUBLIC; uv packaging (`pyproject.toml`/`uv.lock`/
+  `requirements.txt`; stable-pretraining pinned as a package); env.sh retired
+  ("do NOT source env.sh" — its wae-venv is dead on the A6000 VM). Still missing: LICENSE.
+- **Bonus result:** Stage-2 recipe scaled to cfg3+cfg4, 5 seeds: z_v→state R²
+  **0.653 ±0.008** vs raw 0.516 vs PCA-256 0.418, all seeds positive, RankMe 211.
+  Details in EXPERIMENTS.md.
+
+## What actually blocks the full-RH20T run
+
+1. **No trainer consumes the chunk packet.** `mm_perceiver.py` still expects
+   (patch, 28-dim state); nothing reads `dataloader.py`'s motor/ee/masks/robot_id.
+2. **Chunk caches never computed** — `preprocessing/precompute_chunks.py` has not been
+   run; there is no `caches/` on the NAS.
+3. Metrics selection wiring (triplet/pair sampling from the test loader).
+4. Ops on the A6000 VM: use the repo uv venv (NAS wae-venv is dead there);
+   `gh auth login` needed before any push; env.sh's `CUDA_VISIBLE_DEVICES=1` default is
+   stale (all 7 GPUs free).
+
+## Code-review findings (2026-07-06 full read of `user/jiaqi`)
+
+Full review of the branch (core pipeline line-by-line + agent sweep of the rest, mask/EMA
+logic verified against installed stable_pretraining). **Verdict: solid to build on.** Items:
+
+- `extract_frames.py` still has the `endswith("_human")` bug (documented in DATA.md, not
+  fixed) → re-running stage-1 extraction re-leaks 543 `_human_2` scenes. Chunk pipeline
+  filters correctly. Fix before any re-extraction; also its resume check treats any
+  non-empty frame dir as done (partial extractions silently pass).
+- Stage-2 PCA-256 control was fit on train+test rows (train_perceiver.py) — conservative-
+  direction leakage (inflates the baseline we beat). Fit PCA on train only in Phase-1 eval.
+- metrics.py: math correct, no leakage; add NaN guards for degenerate inputs (all-zero
+  latents, single-group splits) when wiring eval.
+- Trainer traps (confirmed): chunk masks are True=VALID but CrossAttention masks are
+  True=BLOCKED (invert!); `rgb [B,1,196,768]`/`motor [B,1,8,3]` carry a singleton time axis
+  their masks lack; `ee_mask` all-False for all of cfg5 + ~⅓ of cfg3 (~12% of data) —
+  masked-mean over zero elements = NaN, skip fully-masked samples; `scene_idx`/`group_idx`
+  are not stable across different `cfgs=` subsets (matters for matrix runs); dataset holds
+  all caches in RAM (~55 GB at 15 chunks/scene) — memmap rework before raising density.
+- Nothing on the branch consumes the chunk packet — the Phase-1 trainer is greenfield.
+
+## Phase 1 — Full-RH20T vis+state, single-timestep MATRIX run (this week)
+
+The safe scale-up of the validated Stage-2 recipe: frozen `e0` vision + Perceiver fusion,
+single timestep, masking over MODALITY. Do NOT unfreeze vision (Stage-1 evidence).
+
+- [ ] **1.1** Env on the A6000 VM: `uv sync`, dataloader smoke test.
+- [ ] **1.2** MMPerceiver v2 + trainer for the chunk packet: three token groups (vision
+      patches / motor / ee), masks honored (cfg5's all-False ee_mask doubles as a free
+      missing-modality robustness test), masked latent prediction over modality +
+      per-modal SIGReg + joint SIGReg. **Every token carries its `ts` from day one** —
+      that is the Phase-2 temporal slot; no data or interface rework later.
+- [ ] **1.3** Camera choice v1: ONE deterministic *external* camera per scene — exclude
+      the wrist cam via the `in_hand` serials in rh20t_api `configs/configs.json`.
+      (`chunk_state.py` currently takes `sorted(serials)[0]`, which is sometimes the
+      wrist cam = the "multi-camera noise". Camera serials are rig-fixed per cfg —
+      verified by sampling.) Multi-view *learning* is parked (see Parked).
+- [ ] **1.4** Run `precompute_chunks` for all 7 cfgs in parallel across the 7 A6000s →
+      NAS `caches/cfg{1..7}.npz` (~190k chunks at 15/scene ≈ ~56 GB patch fp16 — fits).
+- [ ] **1.5** **THE MATRIX:** 4 per-embodiment encoders (flexiv=cfg1+2 6,060 scenes,
+      ur5=cfg3+4 2,993, franka=cfg5 1,321, kuka=cfg6+7 2,402) + 1 joint all-7 encoder,
+      multi-seed, frozen split. Evaluate every encoder on every embodiment's held-out
+      groups → 5×4 transfer matrix. This settles "one encoder vs per-embodiment"
+      empirically — Jia Qi's de-risking and the one-encoder thesis in a single run —
+      and is the headline blog figure.
+- [ ] **1.6** Claims-protection ablations (cfg3-scale, cheap, BEFORE anything goes
+      external): vision-only-*trained* Perceiver (isolates the cross-modal gain — still
+      owed from Stage 2), bottleneck size, joint-SIGReg on/off.
+- [ ] **1.7** Eval: RankMe + probe R² + triplet accuracy (wire the selection — closes the
+      METRICS.md TODO; cross-view / cross-embodiment pairs give the negative tiers),
+      per-config breakdown, PCA-256 control, multi-seed error bars.
+- [ ] **1.8** Blog figures: PCA of the joint-encoder latent colored by robot / task / cfg.
+
+**Gate:** joint encoder ≥ per-embodiment in-domain; positive cross-embodiment transfer;
+no collapse; ablations survive.
+
+## Phase 2 — Temporal (starts the DAY Phase-1 runs launch, not after)
+
+The ×time half of loss #1; Stage-5 kickoff (video + state only; audio stays out). The data
+side already exists: tick-anchored chunks, native-rate ee windows (100/125 Hz), irregular
+ticks (6.7–14.7 Hz), `ts` cached per chunk. Remaining work is model-side only:
+
+- [ ] **2.1** Continuous-time embedding (Time2Vec / mTAN-style Fourier features of the
+      real timestamp) on every token.
+- [ ] **2.2** Multi-tick context windows (Δt-based selection via cached `ts`).
+- [ ] **2.3** Mask over (modality × time) → predict held-out-time / future ee latents.
+- [ ] **2.4** Eval: future force/contact prediction at varying Δt vs the single-timestep
+      Phase-1 baseline.
+
+**Gate:** temporal masking beats single-timestep on future-state prediction with RankMe
+stable. Loss #4 (action-conditioned forward prediction) only after this gate.
+
+## Phase 3 — Decoder (parallel track; Jia Qi / Alex)
+
+- [ ] **3.1** robot_state decoder on frozen Phase-1 latents — "the generative decoder is
+      our superpowered linear probe": quantifies latent content, cheap, days not weeks.
+- [ ] **3.2** PixNeRD → latent diffusion pixel decoder (a viz/probe tool at this stage,
+      not a training signal).
+
+## External validation lead — FLARE / GR00T (from 2026-07-06 lit sweep)
+
+NVIDIA GEAR's **FLARE** (arXiv:2505.15659, CoRL 2025, shipped in GR00T N1.5) trains a VLA
+with an auxiliary JEPA-style loss: predict the *latent* of the observation 16 steps ahead,
+produced by a target encoder g(·). Their ablation shows **g(·) quality is the deciding
+factor** (none 43.9% → raw SigLIP-2 49.6% → their learned encoder 55.0%) — and their best
+g(·) is vision-language only (no proprio/F-T, single rate) and needs an EMA moving-target
+hack. That is a drop-in slot for world-encoder: multimodal, native-rate, SIGReg-frozen.
+**Follow-up after the You Liang Tan meeting:** if receptive, define the interface (token
+count/dim/rate) and run "our encoder as frozen g(·)" as a downstream benchmark for the
+Phase-1 encoder. Prep notes: `~/brain/ishneet/youliangtan-papers.md` (kept out of repo).
+
+## Parked — each with an explicit trigger
+
+| item | trigger |
 |---|---|
-| Decoder (PixNeRD → latent diffusion) | Stage 3 / 6 |
-| Temporal / continuous-time embedding (mTAN-style) — the ×time half of loss #1 | **Stage 5** — unvalidated; don't ride it on the first public run |
-| Audio | later (Jia Qi: skip for now) |
-| Loss #4 action-conditioned forward prediction | Stage 5+ (needs temporal) |
-| Discrete latent / disentanglement | later |
+| Multi-view training objective | Phase-1 analysis: measure same-tick cross-view latent distance with the v1 encoder. If views don't already cluster → add cross-VIEW masked prediction (predict side-view latent from wrist-view + state). Predict-don't-equate — never latent *equality* across views (dual-arm / wrist-cam info-asymmetry objection). Include latent **sum/mean-pool of per-view latents as the fusion baseline** (JQ's neural-codec idea — the additive trick itself doesn't transfer: audio mixes additively at the sensor and codecs are near-lossless, cameras are projections and JEPA latents are lossy by design — but it's the right dumb baseline vs Perceiver fusion with view-tagged tokens). |
+| Loss #4 (action-conditioned) | Phase-2 gate passes (needs temporal machinery). |
+| Audio (full Stage 5) | Temporal proven. |
+| Discrete latent / disentanglement; dual-arm embedding-sum | Microfactory data (Stage 7) — RH20T is single-arm. |
+| Loss balancing (Kendall / GradBlend) | Only if the 3-loss balance misbehaves at scale (it hasn't). |
+| Theory reading | Rate-distortion → when sizing the bottleneck ablation; PID/synergy → when interpreting the transfer matrix; identifiability/causality → Phase 2+ with actions. |
 
-Rationale: this run is the **safe scale-up of the validated Stage-2 recipe** (frozen vision +
-Perceiver, modality fusion, single-timestep). Everything unvalidated (temporal, action, decoder) is
-held to its own stage so the first big public run rests only on what we've already shown works.
+## Decisions to confirm with Jia Qi (blocking)
 
-## Locked decisions
-- **Modalities:** vision + robot_state only. **Skip audio** for now.
-- **Encoder:** frozen `e0` vision (patch tokens) + **Perceiver fusion** (`MMPerceiver`), **single
-  timestep** (masking over MODALITY, not time). This is the validated Stage-2 setup.
-  - Do **NOT** unfreeze vision (Stage 1 showed video finetuning degrades the encoder).
-  - Temporal / continuous-time is **out of scope** for this run (that's Stage 5, later).
-- **Data:** full RH20T, **all 7 configs** (already on NAS at `raw/RH20T_cfg{1..7}`).
-- **State = ROBOT-AGNOSTIC 16-dim** (works across every robot; joints vary 6/14/21 so they're dropped):
-  ```
-  state = [ symlog(tcp_pos)   3
-            6D(tcp_quat)      6
-            symlog(ft)        6
-            symlog(gripper)   1 ] = 16
-  ```
-  - Filter out `*_human` scenes (human demos — no robot state).
-
-## Why these decisions (evidence, so we don't relitigate)
-- Joint dim differs by config: **cfg1=14, cfg3=6, cfg7=21** → a fixed joint layout can't span configs.
-  TCP pose + F/T + gripper are semantically consistent across all robots → 16-dim is portable.
-- `*_human` scenes have **no** `transformed/joint.npy` → must be skipped or the loader crashes.
-- Stage 2 (frozen vision + Perceiver, cfg3) already beat raw vision (+0.29 R²) and PCA-256 (+0.42),
-  all 5 seeds — so scaling *this* setup is low-risk. Unfreezing/temporal is not.
-
----
-
-## Workstream A — Preprocessing refactor  *(BLOCKS the run)*
-- [ ] **A1.** `state.py` → robot-agnostic 16-dim: drop the joint sin/cos block; keep tcp-pos symlog(3)
-      + tcp-quat 6D(6) + ft symlog(6) + gripper symlog(1). Set `STATE_DIM=16`; update `FT_DIMS`
-      (F/T now at indices 9..15).
-- [ ] **A2.** Scene filter: skip any dir ending `_human`, and any scene missing
-      `transformed/tcp_base.npy` / `gripper.npy`. Do this in `precompute_patch` scene loop.
-- [ ] **A3.** **Verify F/T exists in cfg2/4/5/6** (human scenes blocked the check earlier — only
-      1/3/7 confirmed `ft_base=True`). If a config lacks F/T: zero-fill + a "ft-valid" mask bit, or
-      exclude those configs. **Confirm with Jia Qi.**
-- [ ] **A4.** Verify `tcp_base.npy` / `gripper.npy` format is consistent across configs (serial keys,
-      list-of-dicts). `state.py::_from_list` assumes cfg3's layout — check it holds for cfg1/2/4/5/6/7.
-- [ ] **A5.** Per-config sanity: load 1 scene per config, assert a finite 16-dim vector comes out.
-- [ ] **A6.** Make the raw path configurable: `RAW` → env var (e.g. `RH20T_RAW`, default
-      `raw/RH20T_cfg3`); add a `--configs` arg to iterate multiple configs. (Ties into E1.)
-
-## Workstream B — Data pipeline scaling  *(BLOCKS the run)*
-- [ ] **B1.** The `/dev/shm` single-npz cache **won't scale**: patch tokens are 196×768 fp16 ≈ 301 KB
-      /frame; full RH20T at ~30 frames/robot-scene is easily 100+ GB → exceeds RAM. **Decide:**
-      (a) shard the patch-token cache to **NAS** (compute once, reuse across seeds/epochs) — recommended,
-      or (b) run the frozen ViT **on-the-fly** in the dataloader (no big cache, slower per epoch).
-- [ ] **B2.** Build the sharded precompute: iterate configs → filter scenes (A2) → sample frames →
-      frozen-`e0` patch tokens + 16-dim state + (scene, config, timestamp) → write **shards to NAS**.
-- [ ] **B3.** Point `train_perceiver`'s loader at shards instead of the single npz.
-- [ ] **B4.** Estimate storage + wall-time; tune frames/scene to fit the weekend window. `log()` any cap.
-
-## Workstream C — Train/test split & eval  *(needed for a credible public result)*
-- [ ] **C1.** **Fixed, documented split** saved as a manifest in the repo. Scene-held-out (whole
-      scenes to test), stratified across configs + tasks, fixed seed. **Decide granularity with Jia Qi:**
-      held-out by *scene* vs by *task* (task-level = harder, tests task generalization).
-- [ ] **C2.** No leakage: encoder **and** probe see only train scenes; test scenes never trained on.
-- [ ] **C3.** Improve eval: keep predict-robot-state R² (`z_v` vs raw vs PCA-256) + RankMe; add TCP/
-      gripper linear probe, contact/force where present, and a **per-config breakdown**.
-- [ ] **C4.** Keep multi-seed error bars.
-
-## Workstream D — PCA / embedding data analysis  (the "LeJEPA data-analysis" ask)
-- [ ] **D1.** `visualize_stage2.py` is **restored** to the repo (was removed; backup was session-only).
-      It produces: R² bar, PCA scatter colored by task/force, scree curves, nearest-neighbor photo
-      comparison, photos-laid-out-in-PCA-space. Re-verify it runs against the new cache format.
-- [ ] **D2.** Extend to full data: PCA of embeddings colored by **config/robot/task**; show the latent
-      separates robots/tasks. This is the figure set for the blog.
-- [ ] **D3.** Note: `precompute` must also save `path` + `timestamp` for the photo-map figures (this
-      was the small `precompute_patch` diff that got reverted — re-add it when wiring B2).
-
-## Workstream E — Open-source cleanup  *(BLOCKS public, due tomorrow)*
-- [ ] **E1.** Remove hardcoded `/mnt/nas/...` paths → env vars / args. **Coordinate with Jia Qi** —
-      he owns the new `env.sh` replacement, `requirements.txt`, and the `data/RH20T/raw` layout.
-- [ ] **E2.** Install `stable-pretraining` as a **package**, not editable (Ishneet confirmed no local
-      edits). Pin it in requirements.
-- [ ] **E3.** README already high-level (+ EXPERIMENTS + HANDOFF). Make it runnable by an outsider:
-      setup steps, data pointer to `rh20t.github.io`, exact run commands.
-- [ ] **E4.** Strip internal-only artifacts (NAS-specific paths, `gate_*.png` refs, scratch outputs).
-      Secrets scan.
-- [ ] **E5.** Add LICENSE / contributing if going public (Jia Qi?).
-- [ ] **E6.** Keep commit authorship consistent (Ishneet, no Claude attribution).
-
----
-
-## Proposed owner split
-- **Jia Qi:** `env.sh` replacement, `requirements.txt`, data-folder consolidation (done → `raw/`),
-  repo packaging for public (E1/E5).
-- **Ishneet (+ Claude):** state.py robot-agnostic refactor (A), sharded data pipeline (B),
-  split + eval (C), PCA viz (D), path configurability (A6 / E1 code side).
-
-## Order of operations on the new VM
-1. Mount NAS; source new env; verify `raw/RH20T_cfg{1..7}` + `wae-venv`.
-2. **A1–A5** preprocessing refactor + per-config sanity (fast; unblocks everything — do first).
-3. **B** sharded precompute (longest job — kick off early, runs while you refactor).
-4. **C1** write the fixed split manifest.
-5. Launch the **full training run** (weekend) once B + C are ready.
-6. **D** visualizations after the run (or run D on the existing cfg3 cache now for the blog).
-7. **E** cleanup in parallel to hit tomorrow's public deadline.
-
-## Open questions for Jia Qi (confirm before the run)
-1. F/T presence per config (A3) — do all 7 have force/torque, or exclude some?
-2. Split granularity (C1) — by-scene or by-task?
-3. Frames-per-scene budget given NAS storage (B4).
-4. "Full training set" = all 7 configs, or exclude any (e.g. human-heavy configs)?
-
-## Data location note (already changed on NAS)
-Raw data moved: `cfg3_raw/RH20T_cfg3` (now empty) → **`raw/RH20T_cfg3`**, and all 7 configs are
-present under `raw/`. Code still hardcodes the old path in `precompute_patch.py`, `contact_probe.py`,
-`extract_frames.py` — fix via A6. `cfg3_frames/` and `cfg3_shards/` are untouched.
+1. Camera choice v1 = fixed external cam, wrist excluded (proposed above).
+2. File ownership: trainer (Ishneet) vs triplet-selection wiring — both touch his code.
+3. cfg5 stays in with ee fully masked — yes/no.
+4. Push his local work: 2 visualizer commits + 1 tqdm commit are unpushed on his clone.
+5. LICENSE — the repo is already public without one (E5 from the old plan, still open).
+6. Merge direction: build Phase 1 on top of `user/jiaqi` (it has the dataloader/split);
+   `user/ishneet` is stale.

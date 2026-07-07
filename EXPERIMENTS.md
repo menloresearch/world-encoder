@@ -65,3 +65,27 @@ it underperforms single-modality (MJEPA). SIGReg only prevents collapse.
 
 **Left:** ablations (bottleneck size, joint-SIGReg on/off), and **modality × time** (temporal
 masking → predict future force/contact) = the Stage-5 upgrade.
+
+## Stage 2 at scale — cfg3+cfg4 (2026-07-04, branch `user/jiaqi-stage2-cfg34`)
+
+First scale-up beyond the cfg3 POC: same recipe (frozen `e0` + Perceiver, single timestep,
+legacy 28-dim state — cfg3/4 are both UR5 so the layout still fits), 30 frames/scene →
+86,430 frames / 2,881 scenes, 5 seeds, scene-held-out, encoder retrained per split.
+Run script: `run_stage2_cfg34.sh`; artifacts: NAS `checkpoints/exp-20260704-032544/`.
+
+| feature (→ predict robot state) | R² |
+|---|---|
+| **Perceiver `z_v` (256, cross-modal, state masked)** | **0.653 ±0.008** |
+| raw vision (768, mean-pooled) | 0.516 ±0.010 |
+| PCA-256 of LeJEPA vision (compression control) | 0.418 ±0.015 |
+
+- `z_v` − raw = **+0.137 ±0.007**, `z_v` − PCA-256 = **+0.235 ±0.010** — positive on all
+  5 seeds; RankMe 211 (no collapse).
+- The cross-modal gain holds at 3.6× the POC's data. Every baseline improves with more
+  data (raw 0.257 → 0.516) while the ordering is unchanged — the margin over raw narrows
+  in absolute terms but stays decisive vs the compression control.
+- Beyond cfg3+4 the 28-dim state path breaks (joint dims differ per robot); the multi-cfg
+  path is the chunk packet (`chunk_state.py` → `precompute_chunks.py` → `dataloader.py`),
+  used from Phase 1 of [PLAN.md](PLAN.md) onward.
+- **Still owed before this result goes external:** the vision-only-*trained* Perceiver
+  ablation (isolate cross-modal gain from "trained an in-domain encoder").
