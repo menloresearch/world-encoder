@@ -26,6 +26,7 @@ set -euo pipefail
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-1}"   # e.g. "1,2,3" for 3-GPU DDP
 VENV_PY=/home/menlo/brain/world-encoder/.venv/bin/python
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"   # ensure `python -m world_tokenizer...` imports THIS worktree's code (has --head-only), not the main checkout's
 export PYTHONPATH="${REPO_ROOT}:/mnt/nas/data/RH20T/deps/rh20t_api${PYTHONPATH:+:$PYTHONPATH}"
 export HF_HOME=/mnt/nas/data/RH20T/hf_cache
 export TMPDIR=/dev/shm/wae_tmp
