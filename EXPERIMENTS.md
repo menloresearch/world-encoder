@@ -119,6 +119,23 @@ final, ALL 4-seed preliminary):
 | kuka | 0.328 | 0.330 ±0.019 | 0.391 | 0.401 | 0.432 ±0.055 | 0.353 |
 | franka | −0.372 | −0.479 ±0.074 | −6.709 | — (no F/T) | — | — |
 
+Column legend (every cell is a **probe R²** — how well a linear probe predicts held-out robot
+signals from the given feature; higher = better, scene-held-out):
+- **robot** — the embodiment the probe is scored on (its OWN held-out groups; this is the
+  diagonal of the 5×4 transfer matrix).
+- Two **target groups**, each with three feature columns:
+  - **motor** = the 8 motor rows (7 joints + gripper): joint pos/vel, gripper.
+  - **ee** = the 13 end-effector slots: native-rate F/T (force/torque) + TCP 6D pose.
+- Within each group, the feature the probe reads from:
+  - **ALL z_v** — vision-only fused latent `z_v` from the single **ALL** encoder (trained on
+    cfg1–7). State is masked at eval, so no state leaks in — this is the "one encoder for all
+    robots" number (ALL is 4-seed preliminary, no ±std yet).
+  - **spec z_v** — same latent, but from the **specialist** encoder trained only on that
+    robot's cfgs (flexiv=cfg1+2, ur5=cfg3+4, franka=cfg5, kuka=cfg6+7). 5-seed, mean ±std.
+  - **raw** — baseline: same target predicted from raw frozen ViT features (768-dim,
+    mean-pooled), no fusion. The bar `z_v` must beat to show cross-modal gain.
+- **—** = not applicable: franka (cfg5) has no F/T sensor, so it has no ee targets.
+
 RankMe (`z_v`) 142–193 across the board — no collapse (flexiv specialist ±48: one seed dipped).
 
 **Findings (preliminary):**
