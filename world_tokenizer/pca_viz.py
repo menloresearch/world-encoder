@@ -9,21 +9,18 @@ show four patch-aligned panels per image, arranged as baseline-vs-ours pairs:
                        Run at high --res for a fine patch grid (448->28x28, 672->42x42) so
                        the heatmap is smooth like LeJEPA's (their look = many tokens +
                        bicubic upsample, DINOv2 recipe; there is no viz code in their repo).
-  B  latent contribution — the encoder COMPRESSES all patches into one non-spatial vector z
-                       (PerceiverFuse ends in x.mean(1)), so there is no latent to paint per
-                       patch. Instead we map each patch's contribution to z by leave-one-out
-                       occlusion: ||z - z_without_patch_i||. This is the honest 'relate the
-                       compressed latent back to image patches', and ~= attention (a causal
-                       cross-check). (An earlier version faked a spatial PCA of proj_v's
-                       pre-fusion output — dropped, since that visualized the input projection,
-                       not the compressed latent.)
+  B  encoder proj_v PCA — ``proj_v(patch) + mod[0]`` (196xd) -> same PCA as A -> RGB. The
+                       encoder's learned per-patch vision projection: the last spatial layer
+                       BEFORE the Perceiver fuses+pools to the non-spatial bottleneck. A|B is
+                       then a like-for-like ViT-vs-ours comparison (raw ViT patches vs the
+                       trained linear re-mix of them). Fixed at 14x14 (encoder uses 196 tokens).
   C  ViT attention   — e0 last-layer CLS->patch self-attention (DINO-style), heads averaged.
   D  encoder attention — vision-only fuse pass; softmax(q.k^T) of the 8 queries over the
                        196 vision patches. What our fused bottleneck READS from the image.
 
-A is the PCA baseline; B, D are two views of the compressed latent's spatial footprint
-(occlusion vs raw attention — they should agree); C is the baseline attention. The encoder
-runs at 224 (196 tokens, hardcoded in _context/_attn_mask); only A and C scale with --res.
+A|B compare PCA structure (frozen ViT vs the encoder's projection); C|D compare where
+attention lands. The encoder runs at 224 (196 tokens, hardcoded in _context/_attn_mask);
+only the frozen-ViT panels A and C scale with --res.
 The encoder class is picked from the checkpoint keys (proj_s -> MMPerceiver,
 proj_m -> MMPerceiverChunks). Motor/ee/state are dummy tensors the vision-only pass blocks,
 so their values never reach the vision panels. Samples come from the holdout_v1 TEST split.
@@ -60,8 +57,9 @@ from PIL import Image
 
 from world_tokenizer.mm_perceiver import MMPerceiver, PerceiverFuse
 from world_tokenizer.mm_perceiver2 import MMPerceiverChunks
-from world_tokenizer.model import load_vitv2
+from world_tokenizer.model import CKPT, load_vitv2
 
+VIT_NAME = CKPT.split("/")[-1]   # e0 backbone: lejepa-vitb16-pretrain-in1k (LeJEPA ViT-B/16, DINOv2-style)
 GRID = 14  # 224 / 16 -> 14x14 patch grid (196 tokens)
 _NORM_M = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
 _NORM_S = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
@@ -250,25 +248,14 @@ def encoder_attention(model, kind, patch, device):
 
 
 @torch.no_grad()
-def latent_occlusion(model, kind, patch, device):
-    """Panel B: per-patch contribution to the COMPRESSED latent z, ||z - z_without_patch_i||
-    (leave-one-out on the fuse). The honest 'relate the non-spatial bottleneck back to
-    patches': z has no patch index, but removing patch i and re-pooling measures how much it
-    moves. Turns out ~= attention (a causal cross-check). -> [N,14,14]."""
+def encoder_proj(model, patch, device):
+    """Panel B: the encoder's per-patch vision projection proj_v(patch)+mod[0] [N,196,d].
+    This is the last point in the encoder where a spatial grid still exists (BEFORE the
+    Perceiver fuses+pools to the non-spatial bottleneck). A learned linear re-mix of the
+    frozen ViT patches, PCA'd with the SAME method as panel A for a like-for-like ViT-vs-ours
+    comparison. It is the trained analog of the PCA-256 vision control in EXPERIMENTS.md."""
     patch = patch.to(device)
-    P = GRID * GRID
-    idx = torch.arange(P, device=device)
-    maps = []
-    for n in range(patch.shape[0]):
-        ctx, mask = _vision_ctx_mask(model, kind, patch[n:n + 1], device)    # ctx [1,T,d]
-        if mask.dim() == 2:
-            mask = mask.unsqueeze(0)                                         # -> [1,M,T]
-        z_full = model.fuse(ctx, mask)                                       # [1,d]
-        occ = mask.expand(P, -1, -1).clone()                                # [P,M,T]
-        occ[idx, :, idx] = True                                             # variant i also hides patch i
-        z_occ = model.fuse(ctx.expand(P, -1, -1), occ)                      # [P,d]
-        maps.append((z_occ - z_full).norm(dim=-1).reshape(GRID, GRID).float().cpu().numpy())
-    return np.stack(maps)
+    return (model.proj_v(patch) + model.mod[0]).float().cpu()
 
 
 # -------------------------------------------------------------------------------- figure
@@ -281,15 +268,15 @@ def _overlay(ax, crop, heat):
     ax.imshow(crop); ax.imshow(_upsample(_norm01(heat)), cmap="inferno", alpha=0.55)
 
 
-def render(picks, crops, vit_rgb, enc_occ, vit_attn, enc_attn, title, out_path):
+def render(picks, crops, vit_rgb, enc_rgb, vit_attn, enc_attn, title, out_path):
     n = len(picks)
-    cols = ["A · ViT PCA", "B · latent contribution (occlusion)", "C · ViT attention", "D · encoder attention"]
+    cols = [f"A · {VIT_NAME} PCA", "B · encoder proj_v PCA", "C · ViT attention", "D · encoder attention"]
     fig, axes = plt.subplots(n, 5, figsize=(5 * 2.6, n * 2.6), squeeze=False)
     for i, (cfg, group, _) in enumerate(picks):
         axes[i][0].imshow(crops[i])
         axes[i][0].set_ylabel(f"cfg{cfg}\n{group[:22]}", fontsize=7, rotation=0, ha="right", va="center", labelpad=28)
         axes[i][1].imshow(vit_rgb[i])
-        _overlay(axes[i][2], crops[i], enc_occ[i])
+        axes[i][2].imshow(enc_rgb[i])
         _overlay(axes[i][3], crops[i], vit_attn[i])
         _overlay(axes[i][4], crops[i], enc_attn[i])
         for j in range(5):
@@ -357,11 +344,13 @@ def main():
 
     model, kind = build_encoder(args.ckpt, args.device)
     enc_attn = encoder_attention(model, kind, patch_lo, args.device)        # panel D
-    enc_occ = latent_occlusion(model, kind, patch_lo, args.device)          # panel B (latent->patch contribution)
+    proj = encoder_proj(model, patch_lo, args.device)                       # panel B: proj_v output (196 tokens)
 
     vit_rgb = pca_rgb(patch_hi, fg_mask=args.fg_mask)                        # panel A: smooth, hi-res
-    title = f"{os.path.basename(os.path.dirname(args.ckpt))}/{os.path.basename(args.ckpt)}  ({kind}, ViT@{args.res})"
-    render(picks, crops, vit_rgb, enc_occ, vit_attn, enc_attn, title, args.out)
+    enc_rgb = pca_rgb(proj, fg_mask=args.fg_mask)                            # panel B: same PCA method as A
+    title = (f"{os.path.basename(os.path.dirname(args.ckpt))}/{os.path.basename(args.ckpt)}  "
+             f"({kind}, ViT={VIT_NAME}@{args.res})")
+    render(picks, crops, vit_rgb, enc_rgb, vit_attn, enc_attn, title, args.out)
 
 
 if __name__ == "__main__":
