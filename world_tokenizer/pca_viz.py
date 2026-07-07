@@ -1,13 +1,13 @@
-"""PCA-segmentation + attention latent visualization across a robot image (LeJEPA-style).
+"""PCA-RGB + attention latent visualization across a robot image (LeJEPA-style).
 
 The LeJEPA paper paints PCA of a ViT's PATCH tokens over the image ("clear semantic
 relationships"). Our trained encoders pool 8 Perceiver queries into a single vector
 (``PerceiverFuse`` ends in ``x.mean(1)``) — there is no patch grid at the output — so we
 show four patch-aligned panels per image, arranged as baseline-vs-ours pairs:
 
-  A  ViT PCA-seg     — frozen e0 ``patch_latent`` (196x768) -> PCA -> KMeans(k) -> flat
-                       color per patch. The paper's experiment, discretized for clarity.
-  B  encoder PCA-seg — ``proj_v(patch) + mod[0]`` (196xd), same PCA->KMeans(k). PCA of
+  A  ViT PCA-RGB     — frozen e0 ``patch_latent`` (196x768) -> PCA(3) -> RGB overlay.
+                       The paper's exact experiment; model-independent reference.
+  B  encoder PCA-RGB — ``proj_v(patch) + mod[0]`` (196xd) -> PCA(3) -> RGB overlay. PCA of
                        *our* latents (proj_v is one linear layer re-mixing the ViT patches).
   C  ViT attention   — e0 last-layer CLS->patch self-attention (DINO-style), heads averaged.
   D  encoder attention — vision-only fuse pass; softmax(q.k^T) of the 8 queries over the
@@ -20,11 +20,11 @@ so their values never reach the vision panels. Samples come from the holdout_v1 
 
   python -m world_tokenizer.pca_viz \
       --ckpt /mnt/nas/data/RH20T/checkpoints/phase1/all/seed0.pt \
-      --cfgs 1,3,5 --n-images 6 --k 8 --out pca_viz_out/chunk_all.png
+      --cfgs 1,3,5 --n-images 6 --out pca_viz_out/chunk_all.png
 
   python -m world_tokenizer.pca_viz \
       --ckpt /mnt/nas/data/RH20T/checkpoints/exp-20260704-032544/perceiver_seed0.pt \
-      --cfgs 3 --n-images 6 --k 8 --out pca_viz_out/stage2_seed0.png
+      --cfgs 3 --n-images 6 --out pca_viz_out/stage2_seed0.png
 """
 import argparse
 import csv
@@ -40,8 +40,6 @@ import numpy as np
 import torch
 import torchvision.transforms as T
 from PIL import Image
-from sklearn.cluster import KMeans
-from sklearn.decomposition import PCA
 
 from world_tokenizer.mm_perceiver import MMPerceiver, PerceiverFuse
 from world_tokenizer.mm_perceiver2 import MMPerceiverChunks
@@ -106,26 +104,20 @@ def _upsample(grid, size=224, mode=Image.BICUBIC):
     return np.asarray(im).astype(np.float32) / 255.0
 
 
-# ------------------------------------------------------------------------- PCA + KMeans
+# ---------------------------------------------------------------------------------- PCA
 
-_PALETTE = np.array([plt.cm.tab20(i)[:3] for i in range(20)])
-
-
-def pca_seg(feats, k, n_pca, seed):
-    """feats [N,196,C] -> [N,224,224,3] uint8. Per image: PCA(n_pca) denoise -> KMeans(k)
-    -> one flat palette color per patch. Clusters are re-indexed by mean PC1 so the same
-    color tends to mean the same thing (e.g. background) across images."""
+def pca_rgb(feats):
+    """feats [N,196,C] -> [N,224,224,3] uint8. Joint PCA(3) across all patches for
+    cross-image color comparability; robust per-channel 2-98 percentile normalization."""
     N, P, C = feats.shape
-    n_pca = min(n_pca, C, P)
-    out = []
-    for i in range(N):
-        z = PCA(n_components=n_pca, random_state=seed).fit_transform(feats[i].numpy())  # [196,n_pca]
-        lab = KMeans(n_clusters=k, n_init=10, random_state=seed).fit_predict(z)          # [196]
-        order = np.argsort([z[lab == c, 0].mean() if (lab == c).any() else 0.0 for c in range(k)])
-        remap = np.empty(k, int); remap[order] = np.arange(k)
-        rgb = _PALETTE[remap[lab] % 20].reshape(GRID, GRID, 3)
-        out.append(_upsample(rgb, mode=Image.NEAREST))
-    return (np.stack(out) * 255).astype(np.uint8)
+    flat = feats.reshape(-1, C).float()
+    flat = flat - flat.mean(0, keepdim=True)
+    _, _, V = torch.linalg.svd(flat, full_matrices=False)        # right singular vecs = principal axes
+    proj = (flat @ V[:3].T).reshape(N, P, 3).numpy()             # project onto top-3
+    lo, hi = np.percentile(proj, 2, axis=(0, 1)), np.percentile(proj, 98, axis=(0, 1))
+    proj = np.clip((proj - lo) / np.maximum(hi - lo, 1e-6), 0, 1)
+    out = np.stack([_upsample(proj[i].reshape(GRID, GRID, 3)) for i in range(N)])
+    return (out * 255).astype(np.uint8)
 
 
 # ---------------------------------------------------------------- encoder + attention
@@ -197,15 +189,15 @@ def _norm01(h):
     return (h - h.min()) / max(h.max() - h.min(), 1e-8)
 
 
-def render(picks, crops, vit_seg, enc_seg, vit_attn, enc_attn, k, title, out_path):
+def render(picks, crops, vit_rgb, enc_rgb, vit_attn, enc_attn, title, out_path):
     n = len(picks)
-    cols = [f"A · ViT PCA (k={k})", f"B · encoder PCA (k={k})", "C · ViT attention", "D · encoder attention"]
+    cols = ["A · ViT PCA", "B · encoder PCA", "C · ViT attention", "D · encoder attention"]
     fig, axes = plt.subplots(n, 5, figsize=(5 * 2.6, n * 2.6), squeeze=False)
     for i, (cfg, group, _) in enumerate(picks):
         axes[i][0].imshow(crops[i])
         axes[i][0].set_ylabel(f"cfg{cfg}\n{group[:22]}", fontsize=7, rotation=0, ha="right", va="center", labelpad=28)
-        axes[i][1].imshow(vit_seg[i])
-        axes[i][2].imshow(enc_seg[i])
+        axes[i][1].imshow(vit_rgb[i])
+        axes[i][2].imshow(enc_rgb[i])
         axes[i][3].imshow(crops[i]); axes[i][3].imshow(_upsample(_norm01(vit_attn[i])), cmap="inferno", alpha=0.55)
         axes[i][4].imshow(crops[i]); axes[i][4].imshow(_upsample(_norm01(enc_attn[i])), cmap="inferno", alpha=0.55)
         for j in range(5):
@@ -226,8 +218,6 @@ def main():
     ap.add_argument("--ckpt", required=True, help="trained Perceiver encoder .pt")
     ap.add_argument("--cfgs", default="3", help="comma list of cfgs to sample from, e.g. 1,3,5")
     ap.add_argument("--n-images", type=int, default=6)
-    ap.add_argument("--k", type=int, default=8, help="KMeans clusters for the PCA-segmentation panels")
-    ap.add_argument("--n-pca", type=int, default=16, help="PCA components kept (denoise) before clustering")
     ap.add_argument("--split-csv", default="splits/holdout_v1.csv")
     ap.add_argument("--frames-tmpl", default="/mnt/nas/data/RH20T/frames/cfg{cfg}")
     ap.add_argument("--out", default="pca_viz_out/panels.png")
@@ -253,10 +243,10 @@ def main():
     model, kind = build_encoder(args.ckpt, args.device)
     proj, enc_attn = encoder_panels(model, kind, patch, args.device)
 
-    vit_seg = pca_seg(patch, args.k, args.n_pca, args.seed)
-    enc_seg = pca_seg(proj, args.k, args.n_pca, args.seed)
+    vit_rgb = pca_rgb(patch)
+    enc_rgb = pca_rgb(proj)
     title = f"{os.path.basename(os.path.dirname(args.ckpt))}/{os.path.basename(args.ckpt)}  ({kind})"
-    render(picks, crops, vit_seg, enc_seg, vit_attn, enc_attn, args.k, title, args.out)
+    render(picks, crops, vit_rgb, enc_rgb, vit_attn, enc_attn, title, args.out)
 
 
 if __name__ == "__main__":
