@@ -58,47 +58,14 @@ win, joints marginal).
 *architecture* means proving it across *time* — that's Phase 2, and it's next. The decoder
 is a parallel demo, not a proof.
 
-## Phase-2 temporal design — decisions (2026-07-07)
+## Phase-2 temporal design
 
-The problem, stated right: **irregular multivariate time series → compact latent, via
-PerceiverIO; the crux is the time/position encoding.** Time goes *in the token, not the grid*
-— that's the no-resample white-space bet.
-
-**Token = (value, what, where, when).** The "when" is the load-bearing piece:
-- **Time embedding = continuous-time on every token.** Target method is **mTAN — but for us
-  that means only mTAN's *continuous-time embedding*, not the whole mTAN network**, because
-  our Perceiver already IS mTAN's other half (learned queries = reference points; cross-attn =
-  attention-to-observations). Adopting full mTAN would duplicate the Perceiver.
-- **Sequencing:** start with **Fourier / Time2Vec (fixed, log-spaced frequencies)** — it's
-  mTAN's embedding minus learned frequencies, dead simple, tests the pipeline fast. Upgrade to
-  **learned frequencies (= mTAN proper)** only if numbers ask for it. Same interface, no rework.
-- **The actual make-or-break knob:** frequency bank must span **~ms → seconds** (F/T ~100 Hz,
-  episodes multi-second). Log-space it broadly; get this wrong and neither Fourier nor mTAN
-  works. This matters more than Fourier-vs-mTAN.
-- **RoPE / VideoRoPE:** secondary — only if we add temporal self-attention among latents, and
-  then the *continuous* (real-Δt) variant, not integer-index RoPE.
-
-**Per-stream tokenizers (the 1D-CNN, placed correctly):**
-- **Dense F/T stream (~100–125 Hz):** a **1D-CNN** is the right tokenizer (kernel-16 → 128 is a
-  fine start). It's locally near-regular within a chunk, so CNN is ideal *here* — this is the
-  proper home for "flatten the 8×3 grid, conv over time." Keep mask as extra channels (24 vals
-  + 24 mask = 48 in-ch) so variable-DOF masking survives.
-- **Sparse/irregular streams (vision ~10 Hz, joints ~10 Hz):** stay as native tokens with
-  continuous-time embeddings — a kernel-16 CNN is nonsensical here (16 samples = 1.6 s).
-- So the CNN is a *tokenizer for one dense stream*, **not** the global time model.
-
-**Causality:** it's an *attention-mask* property, not something to hard-bake in the conv.
-- **Prediction head + any deployment:** causal (no peeking at the future you predict — required
-  for an honest future-Δt eval; needed for online/streaming use).
-- **Within-window masked-representation objective:** **test both** — V-JEPA-style *bidirectional*
-  usually gives stronger probes. Don't assume causal.
-
-**Objective:** multi-tick windows selected by cached `ts`, mask over (modality × time), predict
-held-out-time / future latents; eval = future force/contact at varying Δt vs single-timestep.
-
-**The decisive ablation:** continuous-time (no resample) **vs** resample-everything + 1D-CNN
-(the classical DSP approach). This either validates or kills the white-space claim — build
-both; if continuous-time doesn't beat resample+CNN, adopt the simpler thing honestly.
+The concrete, authoritative Phase-2 design — continuous-time embedding (mTAN's embedding
+only; Perceiver is the other half), Fourier-first→learned-frequency sequencing, the
+log-spaced frequency-range crux, the 1D-CNN as the dense-F/T tokenizer, causal-vs-
+bidirectional, and the continuous-time-vs-resample ablation — is the checklist in
+**`world-encoder/PLAN.md` § Phase 2 (items 2.1–2.5)**. That is the single source of truth;
+this doc is the lighter status snapshot and defers to it.
 
 ## Open decisions (from PLAN.md)
 Camera choice v1 (fixed external, wrist excluded — already applied in code); file ownership
