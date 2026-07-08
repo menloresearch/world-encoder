@@ -9,13 +9,57 @@ norm. Set n_local=0 for the first runs (all views 224 -> no variable-resolution 
 """
 import glob
 import os
+import re
 
 import torch
 import torchvision.transforms as T
 from PIL import Image
 from torch.utils.data import Dataset
 
+from world_tokenizer.chunk_state import IN_HAND_OF_CFG
+
 _NORM = T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])  # in1k stats
+
+
+def _scene_group(name):
+    """task_..._user_..._scene_..._cfg_... -> (cfg,task,user) group key (drop scene)."""
+    return re.sub(r"_scene_\d+", "", name)
+
+
+def _external_cam(scene_dir, cfg):
+    """Sorted-first EXTERNAL camera dir (wrist/in-hand excluded) — matches the serial
+    precompute_chunks/SceneChunks pick for the multimodal caches (one fixed external view)."""
+    inhand = IN_HAND_OF_CFG.get(cfg, set())
+    cams = sorted(d for d in os.listdir(scene_dir) if d.startswith("cam_"))
+    for c in cams:
+        if c[len("cam_"):] not in inhand:
+            return c
+    return cams[0] if cams else None
+
+
+def split_frame_paths(frames_base, cfgs, split_map, want="train", per_scene=0):
+    """External-cam .jpg paths for the WANTED split's (cfg,task,user) groups across cfgs.
+
+    Holdout-aware: only scenes whose group is `want` in the frozen split map are kept, so a
+    vision finetune trains on the SAME train groups the multimodal encoder used (never test).
+    Wrist views are excluded (one fixed external view, mirroring the chunk-packet pipeline).
+    per_scene>0 evenly strides at most that many frames per scene (bounds NFS small-file IO)."""
+    paths = []
+    for n in cfgs:
+        root = os.path.join(frames_base, f"cfg{n}")
+        if not os.path.isdir(root):
+            continue
+        for s in sorted(d for d in os.listdir(root) if d.startswith("task_")):
+            if split_map.get(_scene_group(s)) != want:
+                continue
+            cam = _external_cam(os.path.join(root, s), n)
+            if cam is None:
+                continue
+            fs = sorted(glob.glob(os.path.join(root, s, cam, "color", "*.jpg")))
+            if per_scene and len(fs) > per_scene:
+                fs = fs[:: max(1, len(fs) // per_scene)][:per_scene]
+            paths.extend(fs)
+    return paths
 
 
 def _global_tf(gsize=224):
@@ -35,9 +79,11 @@ def _local_tf(lsize=96):
 class MultiCropRGB(Dataset):
     """Map-style: each RGB frame -> n_global global crops + n_local local crops."""
 
-    def __init__(self, frames_root, n_global=2, n_local=6, gsize=224, lsize=96):
-        self.paths = sorted(glob.glob(os.path.join(frames_root, "**", "*.jpg"), recursive=True))
-        assert self.paths, f"no .jpg frames found under {frames_root}"
+    def __init__(self, frames_root=None, n_global=2, n_local=6, gsize=224, lsize=96, paths=None):
+        # `paths` (holdout-aware, from split_frame_paths) takes precedence over globbing a root.
+        self.paths = paths if paths is not None else sorted(
+            glob.glob(os.path.join(frames_root, "**", "*.jpg"), recursive=True))
+        assert self.paths, f"no .jpg frames found ({'paths' if paths is not None else frames_root})"
         self.n_global, self.n_local = n_global, n_local
         self.g, self.l = _global_tf(gsize), _local_tf(lsize)
 
