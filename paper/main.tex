@@ -310,17 +310,76 @@ case.
 
 \subsection{Architecture: the Perceiver fuser}
 \label{sec:arch}
-The fuser is a Perceiver~IO cross-attention block~\citep{perceiverio2021}. A
-small set of $M$ learned query vectors cross-attends over the full heterogeneous
-token set (vision patches $+$ motor rows $+$ ee slots), producing $M$ latent
-vectors that are pooled into a fixed-size latent $z$ (256-d in all runs here,
-$M=8$ queries). Cost is $O(N\cdot M)$ in the token count $N$, so adding sensors
-or tokens scales linearly and the same module handles any token-set size or
-composition. Attention masks encode both padding and the deliberate modality
-masking of the training objective; we note the sign convention explicitly to
-avoid a common bug---\emph{chunk masks mark valid entries as} \texttt{True}
-\emph{while cross-attention masks mark blocked entries as} \texttt{True}, so one
-must be inverted before use.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.86\linewidth]{mm_perceiver2_arch.png}
+  \caption{\textbf{The \texttt{MMPerceiver} fuser (single-timestep
+  configuration).} Three heterogeneous streams---frozen ViT-B/16 patch tokens,
+  the $8\times3$ motor grid, and the $13\times15$ end-effector window---are each
+  linearly projected to the shared width $d{=}256$ and tagged with
+  modality/position embeddings, forming a $217$-token context set in which every
+  token carries \emph{(value, what, where, when)}. Eight learned queries
+  cross-attend to this set (Perceiver-IO style, depth 2) and are mean-pooled into
+  the fused latent~$z$. Training is \emph{masked cross-modal prediction}: an
+  attention mask hides one modality and $z$ must predict that modality's
+  EMA-target embedding (predict-don't-equate, MSE), regularized by per-modality
+  and joint SIGReg. At evaluation only vision enters (motor/ee masked) and $z_v$
+  is the exported latent. Blue $=$ trainable projections, green $=$ the fuser,
+  purple $=$ the latent, red $=$ losses; the frozen backbone and EMA targets
+  carry no encoder gradient.}
+  \label{fig:arch}
+\end{figure}
+
+\paragraph{Forward pass.} The fuser is a Perceiver-IO cross-attention
+block~\citep{perceiverio2021}; Figure~\ref{fig:arch} traces it end to end. The
+three projected streams are concatenated into a single context set of $N=217$
+tokens ($196$ vision $+$ $8$ motor $+$ $13$ ee)---heterogeneous in origin but
+homogeneous in width ($d=256$). A small set of $M=8$ learned query vectors
+cross-attends over this set: in each of two depth blocks the queries attend to
+the context and pass through an FFN (pre-norm residuals), after which they are
+mean-pooled into a single fixed-size latent $z\in\mathbb{R}^{256}$. Attention
+masks do double duty---encoding padding/validity \emph{and} the deliberate
+modality masking of the training objective---so we note the sign convention
+explicitly to avoid a common bug: \emph{chunk masks mark valid entries as}
+\texttt{True} \emph{while cross-attention masks mark blocked entries as}
+\texttt{True}, so one must be inverted before use.
+
+\paragraph{Why a latent-bottleneck Perceiver.} Three properties make the
+latent-query Perceiver the right fuser for heterogeneous robot streams, and each
+is a deliberate choice over a more obvious default (a full self-attention
+transformer over all tokens, or late concatenation of per-modality encoders).
+\emph{(i)~Compute decoupled from input size.} Cross-attention from $M$ queries to
+$N$ tokens costs $O(NM)$, not the $O(N^2)$ of self-attention over the token
+set~\citep{perceiverio2021}; adding a sensor, more patches, or (in
+\S\ref{sec:temporal}) more timesteps grows the context linearly and leaves the
+latent width untouched.
+\emph{(ii)~A fixed-size latent under variable input cardinality.} Because the
+output is $M$ pooled queries---not a per-token map---$z$ has the same shape
+whether a robot exposes 6 or 7 joints, carries a force sensor or not, or (at
+eval) sees vision alone. This is what lets \emph{masking}, rather than per-robot
+truncation, carry embodiment-agnosticism (\S\ref{sec:tokenization}): a missing
+modality is simply extra blocked columns, and the exported $z$ is dimensionally
+identical across all four embodiments. A fixed-grid, ViT-style encoder cannot
+offer this; it is the difficulty that pushes HPT to separate per-embodiment
+``stems''~\citep{hpt2024}, which our single shared module avoids.
+\emph{(iii)~Set-structured, order-free fusion.} The context is a \emph{set} of
+typed tokens---position and modality live in the embeddings, not in a fixed
+layout---so one block ingests any token-set composition without architectural
+change, the property that first motivated the Perceiver family for arbitrary
+modalities~\citep{perceiverio2021}.
+
+\paragraph{Why learned queries and cross-attention---and what it sets up.} The
+$M$ queries act as a learned, content-adaptive pooling that summarizes the token
+set into a compact code, but the choice is also forward-looking. The Perceiver's
+structure---\emph{learned queries as reference points, cross-attention as
+attention-to-observations}---is precisely the decomposition Multi-Time Attention
+Networks use for irregularly sampled time series~\citep{mtan2021}, a
+correspondence COPER makes explicit by pairing a continuous-time embedding with a
+Perceiver~\citep{coper2022}. We adopt the same skeleton deliberately so that
+activating the \emph{when} slot (\S\ref{sec:temporal}) is an \emph{embedding}
+change, not an \emph{architecture} change: the fuser that pools three modalities
+at one tick is the same one that will pool observations across native-rate time.
 
 \subsection{Training objective}
 \label{sec:objective}
@@ -332,7 +391,10 @@ modality $m$ is held out.
   \item \textbf{Masked cross-modal latent prediction (the learning signal).}
         Mask one modality (vision, motor, or ee); predict its
         exponential-moving-average \emph{target} latent from the other two. This
-        is JEPA's predict-don't-equate applied across modalities: it forces each
+        is JEPA's predict-don't-equate~\citep{ijepa2023,data2vec2022} applied
+        across modalities---in the spirit of masked multimodal
+        prediction~\citep{m3jepa2024,fourm2023,multimae2022} but carried out in
+        \emph{latent} space: it forces each
         stream to encode structure relevant to the others (vision learns
         force-relevant cues \emph{because it is trained to predict force}), avoids
         intersection-collapse, and is robust to missing modalities by
@@ -353,8 +415,12 @@ modality $m$ is held out.
         used in this report.
 \end{enumerate}
 
-The EMA target encoder is a slow copy of the online encoder; SIGReg is the
-\texttt{SlicedEppsPulley} objective from LeJEPA. Only the fusion head and the
+The EMA target encoder is a slow copy of the online encoder, the momentum-target
+mechanism that stabilizes predictive SSL~\citep{data2vec2022}; SIGReg is the
+\texttt{SlicedEppsPulley} objective from LeJEPA~\citep{lejepa2025}, which replaces
+the usual anti-collapse heuristics (stop-gradient, predictor asymmetry, teacher
+momentum) with an explicit distributional constraint---collapse is instead
+monitored directly with RankMe~\citep{rankme2023}. Only the fusion head and the
 per-modality projections train; the vision backbone stays frozen.
 
 \subsection{Continuous-time, multi-rate extension}
