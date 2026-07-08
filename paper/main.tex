@@ -176,7 +176,8 @@
 \S\ref{sec:method} details the architecture, objective, and tokenization.
 \S\ref{sec:data} describes the RH20T corpus and the robot-agnostic data
 pipeline. \S\ref{sec:experiments} reports the single-timestep results (the
-vision-only baseline, single-embodiment fusion, and the full transfer matrix).
+vision-only baseline and the full transfer matrix), with the single-embodiment
+fusion proof-of-concept in Appendix~\ref{sec:stage2}.
 \S\ref{sec:discussion} states limitations and \S\ref{sec:conclusion} concludes.
 
 
@@ -565,63 +566,6 @@ model: \textbf{a single frame does not contain force}, so vision alone cannot
 encode it. Hence the backbone is frozen (warm-started from the pretrained
 checkpoint) and force must enter through a different modality.
 
-\subsection{Single-embodiment fusion learns genuine cross-modal structure}
-\label{sec:stage2}
-Next we fuse video $+$ robot state at a single timestep on UR5 data and ask
-whether the fused latent beats each modality alone, and whether the gain is
-\emph{cross-modal} rather than mere compression. A cross-modal signal gate
-confirms the premise (frozen vision $\rightarrow$ state $R^2=0.43$, TCP $0.73$),
-justifying the fusion encoder. We train the Perceiver with masked cross-modal
-latent prediction $+$ per-modal $+$ joint SIGReg, and at evaluation feed
-\emph{vision only}, probing to robot state. Table~\ref{tab:stage2} reports two
-runs: a cfg3 proof-of-concept ($\sim$24k frames) and a cfg3$+$cfg4 scale-up
-(86{,}430 frames / 2{,}881 scenes, $3.6\times$ the data).
-
-\begin{table}[t]
-  \centering
-  \caption{Single-embodiment fusion (UR5). Predicting held-out robot state from
-  each feature ($R^2\uparrow$, 5 seeds, group-held-out, encoder retrained per
-  split). The cross-modal latent $z_v$ (vision-only at eval) beats both raw
-  vision and the PCA compression control on all 5 seeds in both runs. RankMe of
-  $z_v$ is $\sim$211 (ceiling 256): no collapse.}
-  \label{tab:stage2}
-  \begin{tabular}{lcc}
-    \toprule
-    feature $\rightarrow$ predict robot state & cfg3 POC & cfg3$+$cfg4 \\
-    \midrule
-    \textbf{Perceiver $z_v$ (256-d, cross-modal, state masked)} & \textbf{0.551 $\pm$0.018} & \textbf{0.653 $\pm$0.008} \\
-    raw vision (768-d, mean-pooled)                             & 0.257 $\pm$0.075          & 0.516 $\pm$0.010 \\
-    PCA-256 of frozen vision (compression control)             & 0.134 $\pm$0.047          & 0.418 $\pm$0.015 \\
-    \bottomrule
-  \end{tabular}
-\end{table}
-
-$z_v$ beats raw vision by $+0.294\pm0.078$ (POC) / $+0.137\pm0.007$ (scale) and
-the PCA control by $+0.417\pm0.050$ / $+0.235\pm0.010$, positive on every seed.
-Two facts make this meaningful. First, \textbf{beating the PCA control shows the
-gain is cross-modal, not compression}: a latent $3\times$ smaller than raw vision
-predicts the robot \emph{better}, while PCA-256---the same compression with no
-cross-modal training---loses. Second, \textbf{only vision enters at eval}, so the
-encoder has \emph{learned to read robot-relevant structure out of pixels} by
-having been trained alongside state. This is exactly what a late-fusion recipe
-(train each modality's encoder separately, then concatenate) cannot produce: its
-vision features were never shaped by force or joints.
-
-\paragraph{Why every baseline rises from cfg3 to cfg3$+$cfg4.}
-The margin over raw narrows in absolute terms ($+0.294\!\rightarrow\!+0.137$) but
-stays decisive over the compression control ($+0.417\!\rightarrow\!+0.235$). The
-baselines rise largely for reasons that are \emph{not} ``raw vision got better at
-decoding within-robot state.'' (i)~$R^2$'s denominator changed: pooling two UR5
-setups injects easy, pixel-readable \emph{between-config} variance (different
-mounts/backgrounds), which any encoder earns for free before decoding any pose.
-(ii)~The POC numbers are noisy/under-fit ($\pm0.075\!\rightarrow\!\pm0.010$,
-$7\times$ tighter). (iii)~PCA-256 improved the most ($+0.284$), diagnostic of the
-new between-config variance landing in its top components. (iv)~$z_v$ rose the
-least ($+0.102$)---it was already near saturation, which is why the margin over
-raw narrows while the margin over compression stays large. The comparison
-carrying the cross-modal claim is $z_v$ vs.\ the compression control, decisive in
-both runs.
-
 \subsection{One encoder for all robots: the full transfer matrix}
 \label{sec:phase1}
 We scale to all 7 configs / 4 embodiments via the robot-agnostic chunk packet
@@ -808,6 +752,70 @@ white space that separates this encoder from synchronized-observation robot SSL.
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \bibliographystyle{plainnat}
 \bibliography{references}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Appendix
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\appendix
+
+\section{Single-embodiment fusion: cfg3 POC and cfg3\texorpdfstring{$+$}{+}cfg4 scale-up}
+\label{sec:stage2}
+Before scaling to the full transfer matrix (\S\ref{sec:phase1}), we fuse video
+$+$ robot state at a single timestep on UR5 data and ask whether the fused latent
+beats each modality alone, and whether the gain is \emph{cross-modal} rather than
+mere compression. A cross-modal signal gate confirms the premise (frozen vision
+$\rightarrow$ state $R^2=0.43$, TCP $0.73$), justifying the fusion encoder. We
+train the Perceiver with masked cross-modal latent prediction $+$ per-modal $+$
+joint SIGReg, and at evaluation feed \emph{vision only}, probing to robot state.
+Table~\ref{tab:stage2} reports two runs: a cfg3 proof-of-concept ($\sim$24k
+frames) and a cfg3$+$cfg4 scale-up (86{,}430 frames / 2{,}881 scenes,
+$3.6\times$ the data).
+
+\begin{table}[h]
+  \centering
+  \caption{Single-embodiment fusion (UR5). Predicting held-out robot state from
+  each feature ($R^2\uparrow$, 5 seeds, group-held-out, encoder retrained per
+  split). The cross-modal latent $z_v$ (vision-only at eval) beats both raw
+  vision and the PCA compression control on all 5 seeds in both runs. RankMe of
+  $z_v$ is $\sim$211 (ceiling 256): no collapse.}
+  \label{tab:stage2}
+  \begin{tabular}{lcc}
+    \toprule
+    feature $\rightarrow$ predict robot state & cfg3 POC & cfg3$+$cfg4 \\
+    \midrule
+    \textbf{Perceiver $z_v$ (256-d, cross-modal, state masked)} & \textbf{0.551 $\pm$0.018} & \textbf{0.653 $\pm$0.008} \\
+    raw vision (768-d, mean-pooled)                             & 0.257 $\pm$0.075          & 0.516 $\pm$0.010 \\
+    PCA-256 of frozen vision (compression control)             & 0.134 $\pm$0.047          & 0.418 $\pm$0.015 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+$z_v$ beats raw vision by $+0.294\pm0.078$ (POC) / $+0.137\pm0.007$ (scale) and
+the PCA control by $+0.417\pm0.050$ / $+0.235\pm0.010$, positive on every seed.
+Two facts make this meaningful. First, \textbf{beating the PCA control shows the
+gain is cross-modal, not compression}: a latent $3\times$ smaller than raw vision
+predicts the robot \emph{better}, while PCA-256---the same compression with no
+cross-modal training---loses. Second, \textbf{only vision enters at eval}, so the
+encoder has \emph{learned to read robot-relevant structure out of pixels} by
+having been trained alongside state. This is exactly what a late-fusion recipe
+(train each modality's encoder separately, then concatenate) cannot produce: its
+vision features were never shaped by force or joints.
+
+\paragraph{Why every baseline rises from cfg3 to cfg3$+$cfg4.}
+The margin over raw narrows in absolute terms ($+0.294\!\rightarrow\!+0.137$) but
+stays decisive over the compression control ($+0.417\!\rightarrow\!+0.235$). The
+baselines rise largely for reasons that are \emph{not} ``raw vision got better at
+decoding within-robot state.'' (i)~$R^2$'s denominator changed: pooling two UR5
+setups injects easy, pixel-readable \emph{between-config} variance (different
+mounts/backgrounds), which any encoder earns for free before decoding any pose.
+(ii)~The POC numbers are noisy/under-fit ($\pm0.075\!\rightarrow\!\pm0.010$,
+$7\times$ tighter). (iii)~PCA-256 improved the most ($+0.284$), diagnostic of the
+new between-config variance landing in its top components. (iv)~$z_v$ rose the
+least ($+0.102$)---it was already near saturation, which is why the margin over
+raw narrows while the margin over compression stays large. The comparison
+carrying the cross-modal claim is $z_v$ vs.\ the compression control, decisive in
+both runs.
 
 
 \end{document}
