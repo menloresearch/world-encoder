@@ -1,0 +1,93 @@
+%%{init: {'theme':'base', 'themeVariables': {'fontSize':'16px','fontFamily':'Helvetica,Arial,sans-serif','primaryColor':'#eef3fb','primaryBorderColor':'#3b6ea5','lineColor':'#5b6470','clusterBkg':'#ffffff','clusterBorder':'#c8ced6'}}}%%
+flowchart TB
+
+  %% ---------- Inputs ----------
+  subgraph IN["Chunk packet (single timestep)"]
+    direction LR
+    RGB["RGB frame"]
+    MOT["Motor rows<br/>[8 x 3] + valid mask"]
+    EE["End-effector window<br/>[13 x 15]"]
+  end
+
+  VIT["Frozen ViT<br/>196 patch tokens x 768"]
+  RGB --> VIT
+
+  %% ---------- Projections to d=256 ----------
+  subgraph PROJ["Per-modality projection to d = 256 (+ modality / position embeddings)"]
+    direction LR
+    PV["proj_v: 768 &rarr; 256<br/>+ mod_v<br/>196 tokens"]
+    PM["proj_m: 6 &rarr; 256<br/>+ mod_m + pos_m<br/>8 tokens"]
+    PE["proj_e: 15 &rarr; 256<br/>+ mod_e + pos_e<br/>13 tokens"]
+  end
+  VIT --> PV
+  MOT --> PM
+  EE --> PE
+
+  CTX["Context tokens<br/>concat &rarr; 217 x 256"]
+  PV --> CTX
+  PM --> CTX
+  PE --> CTX
+
+  %% ---------- Perceiver bottleneck ----------
+  subgraph FUSE["PerceiverFuse (bottleneck, depth 2)"]
+    direction TB
+    Q["8 learnable queries x 256"]
+    CA["Cross-attention (8 heads)<br/>queries attend to context<br/>+ FFN, x2, with modality mask"]
+    POOL["mean-pool over queries"]
+    Q --> CA --> POOL
+  end
+  CTX -->|"attn mask<br/>(hide modality)"| CA
+
+  Z["Fused world latent z<br/>[B x 256]"]
+  POOL --> Z
+
+  %% ---------- Heads / losses ----------
+  subgraph HEADS["Cross-modal masked prediction (predict-don't-equate)"]
+    direction LR
+    HV["hide vision &rarr; pred_v"]
+    HM["hide motor &rarr; pred_m"]
+    HE["hide ee &rarr; pred_e"]
+  end
+  Z --> HV
+  Z --> HM
+  Z --> HE
+
+  subgraph TGT["EMA target encoders (stop-grad)"]
+    direction LR
+    TV["tgt_v(rgb)"]
+    TM["tgt_m(motor)"]
+    TE["tgt_e(ee)"]
+  end
+
+  INV["Prediction loss (MSE)"]
+  HV --> INV
+  HM --> INV
+  HE --> INV
+  TV -.->|target| INV
+  TM -.->|target| INV
+  TE -.->|target| INV
+
+  SIG["SIGReg (Sliced Epps-Pulley)<br/>per-modal + joint on z"]
+  PV -.-> SIG
+  PM -.-> SIG
+  PE -.-> SIG
+  Z --> SIG
+
+  LOSS["Total loss = prediction + &lambda; &middot; SIGReg"]
+  INV --> LOSS
+  SIG --> LOSS
+
+  %% ---------- styling ----------
+  classDef input fill:#fef6e7,stroke:#d9a441,color:#3a2f18;
+  classDef proj fill:#eef3fb,stroke:#3b6ea5,color:#12263a;
+  classDef fuse fill:#e9f5ee,stroke:#3d9970,color:#123524;
+  classDef latent fill:#f3e9f7,stroke:#8e44ad,color:#2e123a,font-weight:bold;
+  classDef loss fill:#fdeceb,stroke:#c0392b,color:#3a1512;
+  classDef tgt fill:#eef1f4,stroke:#8a94a0,color:#2a2f36;
+
+  class RGB,MOT,EE input;
+  class VIT,PV,PM,PE,CTX proj;
+  class Q,CA,POOL fuse;
+  class Z latent;
+  class HV,HM,HE,INV,SIG,LOSS loss;
+  class TV,TM,TE tgt;
