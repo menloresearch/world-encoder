@@ -28,6 +28,14 @@
         <input id="f-scene" class="col-filter" type="number" min="1" step="1"
                placeholder="scene #" aria-label="scene number" autocomplete="off">
       </div>
+      <label id="split-filter-row" class="split-filter-row" hidden>
+        <span class="muted">split</span>
+        <select id="f-split" aria-label="train/test split filter">
+          <option value="all">all</option>
+          <option value="train">train only</option>
+          <option value="test">test only</option>
+        </select>
+      </label>
       <div id="scene-count" class="muted"></div>
       <div id="scene-list" class="scene-list"></div>
     </aside>

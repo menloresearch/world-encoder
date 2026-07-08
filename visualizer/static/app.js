@@ -53,6 +53,7 @@ tabs.metrics.addEventListener("click", () => showTab("metrics"));
 const state = {
   cfg: null,
   scenes: [],
+  splitByScene: {},   // scene name -> "train"|"test" (from the holdout CSV; absent if unknown)
   scene: null,
   cams: [],
   cam: null,
@@ -73,6 +74,8 @@ function frameURL(t) {
 async function init() {
   const summary = await getJSON("/api/summary");
   $("#root-info").textContent = summary.frames_root;
+  // only offer the Train/Test filter when the server actually loaded a split CSV
+  $("#split-filter-row").hidden = !summary.has_split;
   const pills = $("#cfg-pills");
   pills.textContent = "";
   if (!summary.cfgs.length) {
@@ -97,6 +100,8 @@ async function selectCfg(name, pill) {
   state.cfg = name;
   const res = await getJSON(`/api/scenes?cfg=${encodeURIComponent(name)}`);
   state.scenes = res.scenes;
+  state.splitByScene = {};
+  (res.splits || []).forEach((sp, i) => { if (sp) state.splitByScene[res.scenes[i]] = sp; });
   renderSceneList();
 }
 
@@ -118,9 +123,11 @@ const FILTER_IDS = ["#f-task", "#f-user", "#f-scene"];
 function renderSceneList() {
   // one number box per column; blank box = that column is unconstrained
   const [wTask, wUser, wScene] = FILTER_IDS.map((id) => parseInt($(id).value, 10));
+  const wSplit = $("#f-split").value;   // "all" | "train" | "test"
   const list = $("#scene-list");
   list.textContent = "";
   const matches = state.scenes.filter((s) => {
+    if (wSplit !== "all" && state.splitByScene[s] !== wSplit) return false;
     if (Number.isNaN(wTask) && Number.isNaN(wUser) && Number.isNaN(wScene)) return true;
     const f = sceneFields(s);
     if (!f) return false;
@@ -132,8 +139,11 @@ function renderSceneList() {
     `${matches.length} of ${state.scenes.length} scenes`;
   const frag = document.createDocumentFragment();
   for (const s of matches) {
-    const b = el("button", "scene-item", prettyScene(s));
+    const b = el("button", "scene-item");
     b.title = s;
+    b.append(el("span", "scene-label", prettyScene(s)));
+    const sp = state.splitByScene[s];
+    if (sp) b.append(el("span", `split-badge ${sp}`, sp));
     if (s === state.scene) b.classList.add("active");
     b.addEventListener("click", () => selectScene(s));
     frag.append(b);
@@ -141,6 +151,7 @@ function renderSceneList() {
   list.append(frag);
 }
 for (const id of FILTER_IDS) $(id).addEventListener("input", renderSceneList);
+$("#f-split").addEventListener("change", renderSceneList);
 
 async function selectScene(name) {
   stopPlayback();

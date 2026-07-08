@@ -120,8 +120,21 @@ main { height: calc(100vh - 45px); }
   background: var(--page);
   color: var(--ink-1);
 }
+.split-filter-row { display: flex; align-items: center; gap: 8px; }
+.split-filter-row select {
+  font: inherit;
+  flex: 1;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--page);
+  color: var(--ink-1);
+}
 .scene-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; }
 .scene-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   border: none;
   background: none;
   text-align: left;
@@ -131,12 +144,22 @@ main { height: calc(100vh - 45px); }
   padding: 5px 8px;
   border-radius: 6px;
   cursor: pointer;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
+.scene-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.split-badge {
+  flex: none;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  padding: 1px 6px;
+  border-radius: 999px;
+}
+.split-badge.train { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+.split-badge.test  { background: color-mix(in srgb, var(--series-3) 20%, transparent); color: var(--series-3); }
 .scene-item:hover { background: var(--page); }
 .scene-item.active { background: var(--accent); color: #fff; }
+.scene-item.active .split-badge { background: rgba(255, 255, 255, 0.25); color: #fff; }
 
 .empty-state { color: var(--muted); padding: 48px; text-align: center; }
 .muted { color: var(--muted); font-size: 12px; }

@@ -8,20 +8,34 @@ metrics. Stdlib-only Python server + vanilla HTML/JS — nothing to install.
 ```bash
 python visualizer/server.py --port 8000
 # then open http://127.0.0.1:8000
+
+# use a different train/test split (default splits/holdout_v1.csv):
+python visualizer/server.py --split-csv splits/holdout_v2.csv
+python visualizer/server.py --split-csv ''   # disable the Train/Test filter entirely
 ```
 
 The frames root resolves in order: `--frames-root`, `--data-root`/frames, `$RH20T`/frames,
 `/mnt/nas/data/RH20T/frames` — the same layout the pipeline writes
 (`frames/<cfg>/<scene>/<cam>/<stream>/<timestamp_ms>.jpg`).
 
+`--split-csv` points at a holdout CSV (columns `group,cfg,split`, as written by
+`preprocessing/make_split.py`) and defaults to `splits/holdout_v1.csv`. Each scene's
+group is `task_*_user_*_cfg_*` (the `_scene_NNNN` stripped, matching the dataloader's
+`scene_group`), so the Train/Test badge and filter show the exact split the dataloader
+holds out. Pass `--split-csv ''` (or a missing path) to run without a split — the
+Train/Test control just hides.
+
 To view it from another machine, either bind `--host 0.0.0.0` or (safer) tunnel:
 `ssh -L 8000:127.0.0.1:8000 menlo`.
 
 ## Training data tab
 
-cfg → scene (searchable, 800 in cfg3) → camera. Frames play back at recorded timestamps
-(0.5–4× speed), with a scrubber and arrow-key stepping. Frames are served with immutable
-cache headers, so scrubbing back is instant.
+cfg → scene → camera. Filter the scene list by keying a **task / user / scene** number
+into the per-column boxes (blank = unconstrained; `1` matches `0001`), and by
+**train / test** split via the dropdown — each scene row carries a train/test badge from
+the loaded `--split-csv`. Frames play back at recorded timestamps (0.5–4× speed), with a
+scrubber and arrow-key stepping. Frames are served with immutable cache headers, so
+scrubbing back is instant.
 
 Below the player, the **robot state** is plotted exactly as the dataloader sees it: the
 server imports `world_tokenizer.state.SceneState` (so preprocessing can never drift from
