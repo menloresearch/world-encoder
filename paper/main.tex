@@ -5,18 +5,12 @@
 %     \PassOptionsToPackage{numbers, compress}{natbib}
 % before loading neurips_2024
 
-% ready for submission
-\usepackage{neurips_2024}
-
-% to compile a preprint version, e.g., for submission to arXiv, instead of
-% the anonymized submission version, use:
-%     \usepackage[preprint]{neurips_2024}
+% to compile a preprint version, e.g., for submission to arXiv, use the
+% [preprint] option; for the anonymized submission version, remove it.
+\usepackage[preprint]{neurips_2024}
 
 % to compile a camera-ready version, add the [final] option, e.g.:
 %     \usepackage[final]{neurips_2024}
-
-% to avoid loading the natbib package, add option nonatbib:
-%     \usepackage[nonatbib]{neurips_2024}
 
 
 \usepackage[utf8]{inputenc} % allow utf-8 input
@@ -25,35 +19,26 @@
 \usepackage{url}            % simple URL typesetting
 \usepackage{booktabs}       % professional-quality tables
 \usepackage{amsfonts}       % blackboard math symbols
+\usepackage{amsmath}        % math environments
 \usepackage{nicefrac}       % compact symbols for 1/2, etc.
 \usepackage{microtype}      % microtypography
 \usepackage{xcolor}         % colors
 \usepackage{graphicx}       % include figures
 
 
-\title{Title}
-
-% The \author macro works with any number of authors. There are two commands
-% used to separate the names and addresses of multiple authors: \And and \AND.
-%
-% Using \And between authors leaves it to LaTeX to determine where to break the
-% lines. Using \AND forces a line break at that point. So, if LaTeX puts 3 of 4
-% authors names on the first line, and the last on the second line, try using
-% \AND instead of \And before the third author name.
+\title{Kepler-Encoder-V1 Technical Report:\\
+       Towards a Multimodal Embedding Model for Robots}
 
 
+% The \author macro works with any number of authors. Use \And to let LaTeX
+% break lines, or \AND to force a line break at that point.
 \author{%
-  Author Name\thanks{Use footnote for providing further information
-    about author (webpage, alternative address)---\emph{not} for acknowledging
-    funding agencies.} \\
+  Author Name\thanks{Correspondence: \texttt{email@example.com}} \\
   Affiliation \\
-  Address \\
   \texttt{email@example.com} \\
-  % examples of more authors
   % \And
   % Coauthor \\
   % Affiliation \\
-  % Address \\
   % \texttt{email@example.com} \\
 }
 
@@ -65,13 +50,124 @@
 
 
 \begin{abstract}
-  % Abstract goes here.
+  We present Kepler-Encoder-V1, a multimodal embedding model for robotics that
+  maps heterogeneous robot observations and actions into a shared latent space.
+  The model couples a Perceiver~IO backbone~\citep{perceiverio2021} with a
+  joint-embedding predictive training objective~\citep{lejepa2025}, and is
+  trained on large-scale real-robot interaction data~\citep{rh20t2023}.
+  % TODO: summarize the setup, key quantitative results, and headline finding.
+  This report describes the architecture, training objective, data pipeline,
+  and preliminary evaluation of the V1 model.
 \end{abstract}
 
 
 \section{Introduction}
 \label{sec:intro}
-% Content goes here.
+% Motivation: why a single multimodal embedding space for robots.
+Robots perceive and act through many heterogeneous channels---RGB video,
+proprioception, force/torque, and language---and learning a single
+representation that unifies them remains an open problem. Recent work has
+explored multimodal representations for prediction and
+control~\citep{multimodal2019} and self-supervised predictive pre-training for
+motor control~\citep{spatiotemporal2024}. Kepler-Encoder-V1 targets a shared
+embedding space usable across these modalities and across robot embodiments.
+% TODO: state the concrete problem, contributions, and paper roadmap.
+
+\paragraph{Contributions.}
+% TODO: enumerate contributions.
+\begin{itemize}
+  \item A multimodal encoder architecture based on Perceiver~IO
+        \citep{perceiverio2021}.
+  \item A training recipe built on the LeJEPA joint-embedding objective
+        \citep{lejepa2025}.
+  \item An evaluation on real-robot data~\citep{rh20t2023}. % TODO: results.
+\end{itemize}
+
+
+\section{Related Work}
+\label{sec:related}
+
+\paragraph{Joint-embedding and predictive representations.}
+Joint-embedding predictive architectures learn representations by predicting
+latent targets rather than reconstructing pixels. This paradigm has been
+applied to functional brain signals~\citep{jmaefmri2024}, multivariate time
+series~\citep{mtsjepa2026}, and robotic motor
+control~\citep{spatiotemporal2024}. Our training objective follows
+LeJEPA~\citep{lejepa2025}.
+
+\paragraph{Robot representation and action tokenization.}
+A growing line of work tokenizes robot actions for use with sequence models,
+including VQ-based action tokenizers~\citep{vqvla2025}, frequency-space action
+tokenization~\citep{fast2025,stablefast2025}, learned action
+codecs~\citep{actioncodec2026}, and heterogeneous pre-trained
+transformers~\citep{hpt2024}. Motion instruction with inertial tokens has also
+been explored~\citep{mojito2025}.
+
+\paragraph{Image and video autoencoders.}
+Compression-oriented and diffusion-based video autoencoders inform our
+tokenization of the visual stream~\citep{adaptive1dvdae2026,rvmae2026,
+videoae2601,videoae2604,multimodalcompression2022}. Neural codecs have
+additionally been repurposed as tokenizers for adjacent signal
+domains~\citep{biosignaltokenizers2025}.
+
+\paragraph{Robot interaction datasets.}
+We build on large-scale real-robot datasets~\citep{rh20t2023}, and situate our
+data choices relative to humanoid~\citep{humanoidseveryday2025}, large-scale
+manipulation~\citep{agibotworld2025}, mobile
+manipulation~\citep{airoamoma2025}, and contact-rich force-aware
+collections~\citep{forcevla22026}.
+
+
+\section{Method}
+\label{sec:method}
+
+\subsection{Architecture}
+\label{sec:arch}
+% TODO: describe the Perceiver IO encoder, latent array, cross-attention, and
+% per-modality input/output adapters.
+Kepler-Encoder-V1 uses a Perceiver~IO backbone~\citep{perceiverio2021} that
+cross-attends heterogeneous input arrays into a fixed-size latent array,
+enabling a modality-agnostic encoder.
+
+\subsection{Training Objective}
+\label{sec:objective}
+% TODO: state the LeJEPA objective, target/context construction, and loss.
+Training follows the LeJEPA joint-embedding predictive
+objective~\citep{lejepa2025}.
+
+\subsection{Multimodal Tokenization}
+\label{sec:tokenization}
+% TODO: describe per-modality tokenizers (video, proprioception, action, force).
+
+
+\section{Data}
+\label{sec:data}
+% TODO: describe the RH20T-based training corpus, preprocessing, splits.
+The primary training corpus is RH20T~\citep{rh20t2023}.
+% TODO: table of dataset statistics.
+
+
+\section{Experiments}
+\label{sec:experiments}
+% TODO: describe evaluation protocol, baselines, and metrics.
+
+\subsection{Setup}
+\label{sec:setup}
+% TODO.
+
+\subsection{Results}
+\label{sec:results}
+% TODO: main results table and analysis.
+
+
+\section{Discussion and Limitations}
+\label{sec:discussion}
+% TODO.
+
+
+\section{Conclusion}
+\label{sec:conclusion}
+% TODO.
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
