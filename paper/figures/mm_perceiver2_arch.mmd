@@ -1,0 +1,54 @@
+%%{init: {'theme':'base','themeVariables':{'fontSize':'16px','fontFamily':'Helvetica,Arial,sans-serif','primaryColor':'#eef3fb','primaryBorderColor':'#3b6ea5','lineColor':'#5b6470','clusterBkg':'#fbfcfe','clusterBorder':'#cad0d8'}}}%%
+flowchart TB
+
+  %% ---- inputs (one rank, side by side) ----
+  RGB["RGB frame<br/>&rarr; frozen ViT-B/16<br/>196 x 768"]
+  MOT["Motor grid<br/>8 x 3 + valid mask"]
+  EE["End-effector window<br/>13 x 15 (F/T, TCP)"]
+
+  %% ---- per-modality tokenizers to d=256 ----
+  PV["proj_v: 768 &rarr; 256<br/>+ mod_v (196 tok)"]
+  PM["proj_m: 6 &rarr; 256<br/>+ mod_m + pos_m (8 tok)"]
+  PE["proj_e: 15 &rarr; 256<br/>+ mod_e + pos_e (13 tok)"]
+
+  CTX["Context: 217 x 256 tokens &nbsp;&mdash;&nbsp; each = (value, what, where, when)"]
+
+  FUSE["<b>PerceiverFuse</b> bottleneck<br/>8 learned queries &middot; cross-attention (8 heads) + FFN, x2<br/>attention mask hides a modality &middot; mean-pool over queries"]
+
+  Z["Fused world latent&nbsp; z &nbsp;(B x 256)"]
+
+  HEADS["<b>Masked cross-modal prediction</b><br/>hide v / m / e &rarr; pred_v / pred_m / pred_e<br/><i>predict-don't-equate</i> (MSE to target)"]
+  TGT["EMA target encoders<br/>(stop-grad)<br/>tgt_v, tgt_m, tgt_e"]
+  SIG["<b>SIGReg</b> (Sliced Epps-Pulley)<br/>per-modality + joint on z<br/><i>anti-collapse</i>"]
+  LOSS["<b>Total loss = prediction + &lambda; &middot; SIGReg</b>"]
+
+  RGB --> PV
+  MOT --> PM
+  EE  --> PE
+  PV --> CTX
+  PM --> CTX
+  PE --> CTX
+  CTX --> FUSE
+  FUSE --> Z
+  Z --> HEADS
+  Z --> SIG
+  PV -.-> SIG
+  PM -.-> SIG
+  PE -.-> SIG
+  TGT -.->|targets| HEADS
+  HEADS --> LOSS
+  SIG --> LOSS
+
+  classDef input fill:#fef6e7,stroke:#d9a441,color:#3a2f18;
+  classDef proj fill:#eef3fb,stroke:#3b6ea5,color:#12263a;
+  classDef fuse fill:#e9f5ee,stroke:#3d9970,color:#123524;
+  classDef latent fill:#f3e9f7,stroke:#8e44ad,color:#2e123a;
+  classDef loss fill:#fdeceb,stroke:#c0392b,color:#3a1512;
+  classDef tgt fill:#eef1f4,stroke:#8a94a0,color:#2a2f36;
+
+  class RGB,MOT,EE input;
+  class PV,PM,PE,CTX proj;
+  class FUSE fuse;
+  class Z latent;
+  class HEADS,SIG,LOSS loss;
+  class TGT tgt;

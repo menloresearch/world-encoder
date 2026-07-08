@@ -23,8 +23,8 @@ from sklearn.linear_model import LogisticRegression
 
 from world_tokenizer.model import LeJEPAVideo
 
-FRAMES = "/mnt/nas/data/RH20T/cfg3_frames"
-CKPT = "/mnt/nas/data/RH20T/phase1_ckpt_{}.pt"
+FRAMES = "/mnt/nas/data/RH20T/frames/cfg3"
+CKPT = "/mnt/nas/data/RH20T/checkpoints/phase1_ckpt_{}.pt"
 _NORM = T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
 _TF = T.Compose([T.Resize(256), T.CenterCrop(224), T.ToTensor(), _NORM])
 _TASK = re.compile(r"task_(\d+)")

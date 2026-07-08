@@ -15,6 +15,7 @@ downstream models (VLAs, world models) can reuse one shared encoder instead of a
 - Stage 7 — real Microfactory data, same recipe.
 
 Per-stage run notes and results: [`EXPERIMENTS.md`](EXPERIMENTS.md).
+Setup (deps, `rh20t_api`, data paths) and run order: [`world_tokenizer/README.md`](world_tokenizer/README.md).
 
 ## Architecture
 
@@ -39,6 +40,9 @@ other SSL), [le-wm](https://github.com/lucas-maes/le-wm) (full training example)
 
 ## Code
 
-`world_tokenizer/` — the pipeline and evals. Runs from the NAS: `source /mnt/nas/data/RH20T/env.sh`
-(nothing writes to `/`). Run order and implementation notes in
-[`world_tokenizer/README.md`](world_tokenizer/README.md).
+`preprocessing/` — raw RH20T → frames → WebDataset shards (`preprocess_all.sh`), plus the
+data-alignment gate and per-cfg analysis.
+`world_tokenizer/` — the model, training, and evals.
+`metrics/` — encoder-only representation metrics (design notes in [`metrics/METRICS.md`](metrics/METRICS.md)).
+Runs from the NAS: `source /mnt/nas/data/RH20T/env.sh` (nothing writes to `/`).
+Run order and implementation notes in [`world_tokenizer/README.md`](world_tokenizer/README.md).

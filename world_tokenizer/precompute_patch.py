@@ -16,7 +16,7 @@ import torch
 from world_tokenizer.model import load_vitv2
 from world_tokenizer.state import SceneState
 
-RAW = "/mnt/nas/data/RH20T/cfg3_raw/RH20T_cfg3"
+RAW = "/mnt/nas/data/RH20T/raw/RH20T_cfg3"
 _NORM_M = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
 _NORM_S = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
 
@@ -38,7 +38,7 @@ def patch_embed(model, paths, dev, bs=128):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--frames-root", default="/mnt/nas/data/RH20T/cfg3_frames")
+    ap.add_argument("--frames-root", default="/mnt/nas/data/RH20T/frames/cfg3")
     ap.add_argument("--per-scene", type=int, default=15)
     ap.add_argument("--out", default="/dev/shm/wae_tmp/mm_patch.npz")
     args = ap.parse_args()

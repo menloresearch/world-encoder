@@ -7,8 +7,8 @@ For each checkpoint: embed once, then over N scene splits report mean±std of
 Embedding is computed once per checkpoint; the N seeds only re-fit cheap sklearn heads.
 
     python -m world_tokenizer.robust_robot_eval \
-        --ckpts e0: e6:/mnt/nas/data/RH20T/phase1_lr2e5_ckpt_e6.pt \
-                e10hot:/mnt/nas/data/RH20T/phase1_ckpt_e10.pt --seeds 5
+        --ckpts e0: e6:/mnt/nas/data/RH20T/checkpoints/phase1_lr2e5_ckpt_e6.pt \
+                e10hot:/mnt/nas/data/RH20T/checkpoints/phase1_ckpt_e10.pt --seeds 5
 """
 import argparse
 
@@ -19,7 +19,7 @@ from sklearn.metrics import r2_score
 from sklearn.neighbors import KNeighborsClassifier
 
 from rh20t_api.configurations import load_conf
-from world_tokenizer.contact_probe import CONF, sample_with_force
+from world_tokenizer.contact_probe import CONF, RAW, sample_with_force
 from world_tokenizer.model import LeJEPAVideo
 from world_tokenizer.probe_curve import FRAMES, embed
 
@@ -37,6 +37,9 @@ def split(scenes, seed, frac=0.3):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ckpts", nargs="+", required=True, help="tag:path (path ignored for tag e0)")
+    ap.add_argument("--frames-root", default=FRAMES)
+    ap.add_argument("--raw-root", default=RAW, help="dir of raw RH20T_cfg* scene folders")
+    ap.add_argument("--conf", default=CONF, help="rh20t_api configs.json")
     ap.add_argument("--seeds", type=int, default=5)
     ap.add_argument("--per-scene", type=int, default=20)
     ap.add_argument("--max-scenes", type=int, default=300)
@@ -44,8 +47,8 @@ def main():
     args = ap.parse_args()
     dev = "cuda" if torch.cuda.is_available() else "cpu"
 
-    confs = load_conf(CONF)
-    rows = sample_with_force(FRAMES, confs, args.per_scene, args.max_scenes)
+    confs = load_conf(args.conf)
+    rows = sample_with_force(args.raw_root, args.frames_root, confs, args.per_scene, args.max_scenes)
     paths = [r[0] for r in rows]
     scenes = [r[1] for r in rows]
     fmag = np.array([r[2] for r in rows])

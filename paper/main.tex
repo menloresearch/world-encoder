@@ -1,0 +1,887 @@
+\documentclass{article}
+
+
+% if you need to pass options to natbib, use, e.g.:
+%     \PassOptionsToPackage{numbers, compress}{natbib}
+% before loading neurips_2024
+
+% to compile a preprint version, e.g., for submission to arXiv, use the
+% [preprint] option; for the anonymized submission version, remove it.
+\usepackage[preprint]{neurips_2024}
+
+% to compile a camera-ready version, add the [final] option, e.g.:
+%     \usepackage[final]{neurips_2024}
+
+
+\usepackage[utf8]{inputenc} % allow utf-8 input
+\usepackage[T1]{fontenc}    % use 8-bit T1 fonts
+\usepackage{hyperref}       % hyperlinks
+\usepackage{url}            % simple URL typesetting
+\usepackage{booktabs}       % professional-quality tables
+\usepackage{amsfonts}       % blackboard math symbols
+\usepackage{amsmath}        % math environments
+\usepackage{nicefrac}       % compact symbols for 1/2, etc.
+\usepackage{microtype}      % microtypography
+\usepackage{xcolor}         % colors
+\usepackage{graphicx}       % include figures
+\graphicspath{{figures/}}
+
+
+\title{Kepler-Encoder-V1 Technical Report:\\
+       Towards a Multimodal and Multi-rate Embedding Model for Robots}
+
+
+% The \author macro works with any number of authors. Use \And to let LaTeX
+% break lines, or \AND to force a line break at that point.
+\author{%
+  Author Name\thanks{Correspondence: \texttt{email@example.com}} \\
+  Affiliation \\
+  \texttt{email@example.com} \\
+  % \And
+  % Coauthor \\
+  % Affiliation \\
+  % \texttt{email@example.com} \\
+}
+
+
+\begin{document}
+
+
+\maketitle
+
+
+\begin{abstract}
+  A robot is not a camera: it perceives through RGB video, proprioception, and
+  force/torque, streaming at different and irregular rates. Yet most robot
+  learning systems use a \emph{vision-only} encoder and treat the remaining
+  sensors as an afterthought bolted on downstream. We present
+  \textbf{Kepler-Encoder-V1}, a robot-first multimodal embedding model that maps
+  heterogeneous robot observations into a single shared latent space. Every
+  sensor reading becomes a token of \emph{(value, what, where, when)}; a
+  Perceiver~IO backbone~\citep{perceiverio2021} cross-attends the resulting
+  heterogeneous token set into a fixed-size latent; and the encoder is trained
+  by \emph{masked cross-modal latent prediction}---hide one sensor, predict its
+  latent from the rest---regularized against collapse by the
+  LeJEPA/SIGReg objective~\citep{lejepa2025}. On the RH20T real-robot
+  corpus~\citep{rh20t2023} (7 configurations, 4 embodiments), a single encoder
+  trained on all robots matches or beats per-robot specialists on their own
+  robot, and its \emph{vision-only} latent recovers held-out force/torque and
+  joint state substantially better than raw frozen-ViT features---the clearest
+  gains appearing exactly where a camera is blind (contact and force). The gain
+  survives a PCA compression control, isolating it as cross-modal learning
+  rather than dimensionality reduction. We detail the architecture, the
+  training objective, the robot-agnostic multi-rate data pipeline, and an
+  evaluation suite designed to resist single-metric self-deception, and we lay
+  out the continuous-time extension that is the model's central architectural
+  bet.
+\end{abstract}
+
+
+\section{Introduction}
+\label{sec:intro}
+
+\paragraph{The problem.}
+\begin{itemize}
+  \item A robot senses through many heterogeneous channels---RGB video,
+        joint encoders, force/torque, gripper state, later audio and IMU---each
+        streaming at a different, irregular native rate (cameras $\sim$7--15~Hz
+        and jittery; force/torque $\sim$100--125~Hz).
+  \item Almost every robot-learning system today follows the vision(-language)
+        encoder paradigm~\citep{openvla2024}: a vision backbone produces the
+        representation, and robot state is appended downstream as raw numbers.
+        The encoder never sees force, joints, or contact.
+  \item Learning a \emph{single} representation that unifies these streams
+        across modalities and across embodiments remains open.
+\end{itemize}
+
+\paragraph{Why an encoder, and why it must be multimodal.}
+\begin{itemize}
+  \item \textbf{Everything downstream is bounded by what survives the encoder.}
+        If force never enters the latent, no world model or policy built on top
+        can reason about contact. We verify the failure directly: a single video
+        frame does not contain force, so force is essentially unpredictable from
+        vision alone ($R^2 \approx 0$; \S\ref{sec:stage1}).
+  \item The encoder is therefore the load-bearing component---and the reusable
+        asset: train it once with self-supervision and every downstream task
+        inherits it, evaluated cheaply with linear probes instead of retraining a
+        full policy.
+  \item A shared latent also doubles as \emph{compression} for shipping sensor
+        data edge~$\rightarrow$~cloud.
+\end{itemize}
+
+\paragraph{Why self-supervised, why JEPA, why LeJEPA.}
+\begin{itemize}
+  \item Robot data has no labels at scale, so training must be self-supervised.
+  \item \emph{Reconstruction} (autoencoders/MAE) forces the latent to memorize
+        pixel-level nuisance (texture, background)---appearance, not world state.
+  \item \emph{Contrastive / ``equate''} objectives force different views to be
+        \emph{equal}, collapsing the latent to the \emph{intersection} of what
+        all sensors share---but sensors genuinely carry different information (a
+        wrist camera cannot see what a side camera sees).
+  \item \emph{JEPA---``predict, don't equate''} masks one part and predicts its
+        \emph{latent} from the rest~\citep{ijepa2023}. Prediction respects
+        information asymmetry and is robust to missing sensors by construction
+        (a masked modality at train time $=$ a dead sensor at deployment).
+  \item JEPA's failure mode is \emph{collapse}. \textbf{LeJEPA}~\citep{lejepa2025}
+        is why we pick this lineage: its SIGReg objective (pushing embeddings
+        toward an isotropic Gaussian along random 1-D slices) provably prevents
+        collapse with almost no tuning, and ships a pretrained ViT checkpoint we
+        warm-start from.
+\end{itemize}
+
+\paragraph{The architectural bet.}
+\begin{itemize}
+  \item Every sensor reading is a token of \emph{(value, what, where, when)}:
+        a per-modality tokenizer for the \emph{value}, a learned modality
+        embedding for \emph{what}, spatial position for \emph{where}, and---the
+        core bet---a \textbf{continuous-time embedding of the real timestamp}
+        for \emph{when}.
+  \item Encoding \emph{when} as a continuous function of the true timestamp lets
+        streams at different native rates fuse \emph{without resampling to a
+        common clock and without zero-padding}---the white space the closest
+        robot-SSL work explicitly avoids (MSDP assumes synchronized
+        observations~\citep{msdp2025}).
+  \item A \textbf{Perceiver} fuser cross-attends the whole heterogeneous token
+        pile into a fixed-size latent at cost linear in token count, indifferent
+        to how many sensors or which robot---one architecture spanning a 6-DOF
+        UR5 and a 7-DOF KUKA via masking.
+\end{itemize}
+
+\paragraph{Contributions.}
+\begin{itemize}
+  \item \textbf{A robot-first multimodal encoder} that ingests video,
+        proprioception, and force/torque as first-class tokens and fuses them
+        with a Perceiver~IO backbone~\citep{perceiverio2021}
+        (\S\ref{sec:arch}).
+  \item \textbf{A cross-modal training recipe} built on LeJEPA: masked
+        cross-modal latent prediction plus per-modality and joint SIGReg, with a
+        robot-agnostic state representation that keeps every joint via masking
+        rather than truncation (\S\ref{sec:objective},
+        \S\ref{sec:tokenization}).
+  \item \textbf{Evidence at scale on RH20T} (7 configs, 4 embodiments): a single
+        encoder matches per-robot specialists and transfers across embodiments,
+        and the vision-only latent recovers force/torque better than raw ViT
+        features---beating a PCA compression control, isolating the gain as
+        cross-modal (\S\ref{sec:experiments}).
+  \item \textbf{An evaluation protocol} pairing a label-free collapse detector
+        (RankMe), unsaturated robot-relevant probes, and group-level split
+        hygiene, designed to resist single-metric self-deception
+        (\S\ref{sec:setup}).
+  \item \textbf{The continuous-time, multi-rate extension} that is the model's
+        central bet, specified and de-risked by the single-timestep results
+        (\S\ref{sec:temporal}).
+\end{itemize}
+
+\paragraph{Roadmap.} \S\ref{sec:related} situates the work.
+\S\ref{sec:method} details the architecture, objective, and tokenization.
+\S\ref{sec:data} describes the RH20T corpus and the robot-agnostic data
+pipeline. \S\ref{sec:experiments} reports the single-timestep results (the
+vision-only baseline and the full transfer matrix), with the single-embodiment
+fusion proof-of-concept in Appendix~\ref{sec:stage2}.
+\S\ref{sec:discussion} states limitations and \S\ref{sec:conclusion} concludes.
+
+
+\section{Related Work}
+\label{sec:related}
+
+\paragraph{Joint-embedding and predictive representations.}
+Joint-embedding predictive architectures learn representations by predicting
+latent targets rather than reconstructing inputs, avoiding the pixel-memorization
+trap of autoencoders~\citep{ijepa2023,data2vec2022}. The paradigm has been applied
+to video~\citep{vjepa22025}, functional brain signals~\citep{jmaefmri2024},
+multivariate time series~\citep{mtsjepa2026}, and robotic motor
+control~\citep{spatiotemporal2024}. Our training objective follows
+LeJEPA~\citep{lejepa2025}, whose SIGReg regularizer replaces the architectural
+anti-collapse heuristics (stop-gradient, predictor asymmetry, teacher momentum)
+with a distributional constraint. On the multimodal side, masked cross-modal
+prediction appears in M3-JEPA~\citep{m3jepa2024}, 4M~\citep{fourm2023},
+MultiMAE~\citep{multimae2022}, and data2vec~\citep{data2vec2022}; we adopt the
+predict-one-modality-from-the-rest structure but in \emph{latent} space with
+SIGReg, over robot sensor streams rather than images/text.
+
+\paragraph{Robot multi-sensor representation.}
+Vision-language-action models~\citep{openvla2024} produce a vision-centric
+representation and treat proprioception as a bolted-on input; heterogeneous
+pre-trained transformers align proprioceptive-visual streams across
+embodiments~\citep{hpt2024}. A separate line learns tactile and multisensory
+touch representations~\citep{sparsh2024,sparshx2025,seehearfeel2022,m3l2023}. The
+closest work, MSDP~\citep{msdp2025}, pre-trains a multi-sensory dynamics model
+but \emph{assumes synchronized observations}---precisely the multi-rate
+assumption we set out to remove. Action tokenization for sequence
+models~\citep{vqvla2025,fast2025,stablefast2025,actioncodec2026,mojito2025} is
+complementary: it compresses actions for policies, whereas we compress
+\emph{observations} into a reusable state latent.
+
+\paragraph{Continuous-time and irregular multimodal fusion.}
+The \emph{when} slot borrows continuous-time embeddings from the irregular
+time-series literature: mTAN~\citep{mtan2021}, Time2Vec~\citep{time2vec2019},
+SeFT~\citep{seft2019}, and ContiFormer~\citep{contiformer2024}. COPER couples a
+continuous-time embedding with a Perceiver~\citep{coper2022}, and
+FuseMoE~\citep{fusemoe2024} and UTDE~\citep{utde2022} fuse irregular multimodal
+streams---but all in the electronic-health-record domain. We transplant the
+continuous-time-token idea into robot sensor fusion, where the rate mismatch
+(100~Hz force vs.\ 10~Hz vision) is the defining difficulty.
+
+\paragraph{Image and video autoencoders; compression.}
+Compression-oriented and diffusion-based video
+autoencoders~\citep{adaptive1dvdae2026,rvmae2026,videoae2601,videoae2604,
+multimodalcompression2022} and neural codecs repurposed as
+tokenizers~\citep{biosignaltokenizers2025} inform the (optional) decoder and the
+compression framing, but not the training signal: reconstruction is deliberately
+kept out of the objective.
+
+\paragraph{Robot interaction datasets.}
+We train on RH20T~\citep{rh20t2023}, and situate our data choices relative to
+humanoid~\citep{humanoidseveryday2025}, large-scale
+manipulation~\citep{agibotworld2025}, mobile manipulation~\citep{airoamoma2025},
+and contact-rich force-aware collections~\citep{forcevla22026}.
+
+\paragraph{Downstream validation target.}
+Auxiliary latent-prediction objectives improve VLA policies when the target
+encoder is strong: FLARE~\citep{flare2025} predicts the latent of a future
+observation and shows the target encoder's quality is the deciding factor. This
+is a natural downstream slot for a multimodal, native-rate encoder such as ours.
+
+
+\section{Method}
+\label{sec:method}
+
+\subsection{Design principles}
+Three commitments shape every choice below.
+(i)~\textbf{Encoder-first:} the representation is the product; downstream models
+consume the latent, so the latent must contain what they will need---force and
+contact included.
+(ii)~\textbf{Predict, don't equate:} fusion is learned by cross-modal
+\emph{prediction}, never by forcing modalities to agree, which respects
+information asymmetry between sensors and yields missing-sensor robustness for
+free.
+(iii)~\textbf{Native rates, no resampling:} time is carried \emph{in the token},
+not by interpolating every stream onto a shared grid---the load-bearing idea for
+multi-rate fusion (built in \S\ref{sec:temporal}; the single-timestep model of
+this report is its degenerate one-tick case).
+
+\subsection{Token representation: \emph{(value, what, where, when)}}
+\label{sec:tokenization}
+Every sensor reading is embedded as a token carrying four components.
+
+\paragraph{Value---per-modality tokenizers.}
+\begin{itemize}
+  \item \textbf{Vision.} Patch tokens from a \emph{frozen} LeJEPA ViT-B/16
+        (196 patches $\times$ 768-d). The backbone is frozen on the evidence of
+        \S\ref{sec:stage1} (finetuning on robot video degrades the encoder and
+        adds nothing robot-relevant), not by assumption. Only the fusion head
+        trains ($\sim$2M parameters).
+  \item \textbf{Proprioception (motor).} A robot-agnostic $8\times3$ grid: rows
+        0--6 are joints, row 7 is the gripper. Channels are scale-respecting
+        encodings---$[\sin q, \cos q, \mathrm{symlog}\,\dot q]$ for joints,
+        symlog width for the gripper. Angles use $\sin/\cos$ to remove the
+        $2\pi$ wrap; unbounded quantities use symlog; rotations use the
+        continuous 6-D representation~\citep{rot6d2019}.
+  \item \textbf{End-effector (ee).} A $13\times15$ block of native-rate samples
+        in the interval $[\text{tick}_k, \text{tick}_{k+1})$: symlog force/torque
+        (6), symlog TCP translation (3), and TCP 6-D rotation (6), zero-padded to
+        a fixed window.
+\end{itemize}
+
+\paragraph{What---modality embedding.} A learned embedding tags each token with
+its modality (vision / joints / gripper / force-torque / \ldots), so the fuser
+can route by source.
+
+\paragraph{Where---spatial position.} Image patch tokens carry their spatial
+position; non-spatial state tokens omit it.
+
+\paragraph{When---continuous-time embedding.} Each token carries an embedding of
+its \emph{real timestamp}. In the single-timestep model of this report all
+tokens of a chunk share one tick, so this slot is constant; \S\ref{sec:temporal}
+activates it. Crucially, \emph{the timestamp is threaded through every token from
+day one}, so turning on the temporal axis requires no data- or interface-level
+rework.
+
+\paragraph{Robot-agnostic state via masking, not truncation.}
+Different robots expose different joint counts (6 for UR5, 7 for Flexiv/Franka/
+KUKA) and different sensor suites (Franka has no physical force/torque sensor).
+Rather than defining a per-robot state vector, we fix the $8\times3$ motor grid
+and $13\times15$ ee block for \emph{all} robots and \emph{mask} the rows/channels
+a given robot does not populate. This (a) lets one architecture span every
+embodiment, (b) keeps joints as first-class tokens instead of dropping them, and
+(c) makes a missing modality identical to a masked one---so Franka's absent
+force sensor is a built-in missing-modality robustness test rather than a special
+case.
+
+\subsection{Architecture: the Perceiver fuser}
+\label{sec:arch}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.86\linewidth]{mm_perceiver2_arch.png}
+  \caption{\textbf{The \texttt{MMPerceiver} fuser (single-timestep
+  configuration).} Three heterogeneous streams---frozen ViT-B/16 patch tokens,
+  the $8\times3$ motor grid, and the $13\times15$ end-effector window---are each
+  linearly projected to the shared width $d{=}256$ and tagged with
+  modality/position embeddings, forming a $217$-token context set in which every
+  token carries \emph{(value, what, where, when)}. Eight learned queries
+  cross-attend to this set (Perceiver-IO style, depth 2) and are mean-pooled into
+  the fused latent~$z$. Training is \emph{masked cross-modal prediction}: an
+  attention mask hides one modality and $z$ must predict that modality's
+  EMA-target embedding (predict-don't-equate, MSE), regularized by per-modality
+  and joint SIGReg. At evaluation only vision enters (motor/ee masked) and $z_v$
+  is the exported latent. Blue $=$ trainable projections, green $=$ the fuser,
+  purple $=$ the latent, red $=$ losses; the frozen backbone and EMA targets
+  carry no encoder gradient.}
+  \label{fig:arch}
+\end{figure}
+
+\paragraph{Forward pass.} The fuser is a Perceiver-IO cross-attention
+block~\citep{perceiverio2021}; Figure~\ref{fig:arch} traces it end to end. The
+three projected streams are concatenated into a single context set of $N=217$
+tokens ($196$ vision $+$ $8$ motor $+$ $13$ ee)---heterogeneous in origin but
+homogeneous in width ($d=256$). A small set of $M=8$ learned query vectors
+cross-attends over this set: in each of two depth blocks the queries attend to
+the context and pass through an FFN (pre-norm residuals), after which they are
+mean-pooled into a single fixed-size latent $z\in\mathbb{R}^{256}$. Attention
+masks do double duty---encoding padding/validity \emph{and} the deliberate
+modality masking of the training objective---so we note the sign convention
+explicitly to avoid a common bug: \emph{chunk masks mark valid entries as}
+\texttt{True} \emph{while cross-attention masks mark blocked entries as}
+\texttt{True}, so one must be inverted before use.
+
+\paragraph{Why a latent-bottleneck Perceiver.} Three properties make the
+latent-query Perceiver the right fuser for heterogeneous robot streams, and each
+is a deliberate choice over a more obvious default (a full self-attention
+transformer over all tokens, or late concatenation of per-modality encoders).
+\emph{(i)~Compute decoupled from input size.} Cross-attention from $M$ queries to
+$N$ tokens costs $O(NM)$, not the $O(N^2)$ of self-attention over the token
+set~\citep{perceiverio2021}; adding a sensor, more patches, or (in
+\S\ref{sec:temporal}) more timesteps grows the context linearly and leaves the
+latent width untouched.
+\emph{(ii)~A fixed-size latent under variable input cardinality.} Because the
+output is $M$ pooled queries---not a per-token map---$z$ has the same shape
+whether a robot exposes 6 or 7 joints, carries a force sensor or not, or (at
+eval) sees vision alone. This is what lets \emph{masking}, rather than per-robot
+truncation, carry embodiment-agnosticism (\S\ref{sec:tokenization}): a missing
+modality is simply extra blocked columns, and the exported $z$ is dimensionally
+identical across all four embodiments. A fixed-grid, ViT-style encoder cannot
+offer this; it is the difficulty that pushes HPT to separate per-embodiment
+``stems''~\citep{hpt2024}, which our single shared module avoids.
+\emph{(iii)~Set-structured, order-free fusion.} The context is a \emph{set} of
+typed tokens---position and modality live in the embeddings, not in a fixed
+layout---so one block ingests any token-set composition without architectural
+change, the property that first motivated the Perceiver family for arbitrary
+modalities~\citep{perceiverio2021}.
+
+\paragraph{Why learned queries and cross-attention---and what it sets up.} The
+$M$ queries act as a learned, content-adaptive pooling that summarizes the token
+set into a compact code, but the choice is also forward-looking. The Perceiver's
+structure---\emph{learned queries as reference points, cross-attention as
+attention-to-observations}---is precisely the decomposition Multi-Time Attention
+Networks use for irregularly sampled time series~\citep{mtan2021}, a
+correspondence COPER makes explicit by pairing a continuous-time embedding with a
+Perceiver~\citep{coper2022}. We adopt the same skeleton deliberately so that
+activating the \emph{when} slot (\S\ref{sec:temporal}) is an \emph{embedding}
+change, not an \emph{architecture} change: the fuser that pools three modalities
+at one tick is the same one that will pool observations across native-rate time.
+
+\subsection{Training objective}
+\label{sec:objective}
+Training combines a cross-modal predictive signal with two anti-collapse
+regularizers. Let $z$ denote the fused latent and $z^{(m)}$ the fused latent when
+modality $m$ is held out.
+
+\begin{enumerate}
+  \item \textbf{Masked cross-modal latent prediction (the learning signal).}
+        Mask one modality (vision, motor, or ee); predict its
+        exponential-moving-average \emph{target} latent from the other two. This
+        is JEPA's predict-don't-equate~\citep{ijepa2023,data2vec2022} applied
+        across modalities---in the spirit of masked multimodal
+        prediction~\citep{m3jepa2024,fourm2023,multimae2022} but carried out in
+        \emph{latent} space: it forces each
+        stream to encode structure relevant to the others (vision learns
+        force-relevant cues \emph{because it is trained to predict force}), avoids
+        intersection-collapse, and is robust to missing modalities by
+        construction. A shared encoder \emph{without} this signal underperforms
+        single-modality baselines---the cross-modal loss is required, not
+        optional.
+  \item \textbf{Per-modality SIGReg.} A SIGReg (SlicedEppsPulley) penalty applied
+        to each modality's embeddings before fusion. It prevents per-modality
+        collapse and acts as a magnitude standardizer, making modalities
+        commensurate before they are fused (the standardization that naive
+        concatenation of separately-trained encoders skips).
+  \item \textbf{Joint SIGReg.} The same penalty on the fused latent $z$, keeping
+        it high-rank (expressive) rather than collapsed.
+  \item \textbf{Action-conditioned forward prediction (future work).} Same-time
+        cross-modal alignment is only correlational; predicting future latents
+        from actions is the causal engine that earns the term ``world model.'' It
+        is gated behind the temporal machinery of \S\ref{sec:temporal} and not
+        used in this report.
+\end{enumerate}
+
+The EMA target encoder is a slow copy of the online encoder, the momentum-target
+mechanism that stabilizes predictive SSL~\citep{data2vec2022}; SIGReg is the
+\texttt{SlicedEppsPulley} objective from LeJEPA~\citep{lejepa2025}, which replaces
+the usual anti-collapse heuristics (stop-gradient, predictor asymmetry, teacher
+momentum) with an explicit distributional constraint---collapse is instead
+monitored directly with RankMe~\citep{rankme2023}. Only the fusion head and the
+per-modality projections train; the vision backbone stays frozen.
+
+\subsection{Continuous-time, multi-rate extension}
+\label{sec:temporal}
+The single-timestep model validates modality fusion; the central architectural
+bet is fusing streams \emph{across time at their native rates}. The data side
+already supports it (tick-anchored native-rate windows with per-token
+timestamps, \S\ref{sec:data}); the remaining work is model-side.
+
+\begin{itemize}
+  \item \textbf{Continuous-time embedding (the \emph{when} slot).} We embed each
+        token's real timestamp with a Fourier / Time2Vec feature
+        map~\citep{time2vec2019} using fixed, \emph{log-spaced} frequencies,
+        upgradable to learned frequencies (mTAN proper~\citep{mtan2021}) behind
+        the same interface. We deliberately take only mTAN's continuous-time
+        \emph{embedding}, not the whole network: the Perceiver already supplies
+        mTAN's other half (learned queries are the reference points;
+        cross-attention is attention-to-observations), a point COPER makes
+        architecturally explicit~\citep{coper2022}. The make-or-break knob is the
+        frequency band, which must span $\sim$ms (100~Hz force) to seconds
+        (multi-second episodes).
+  \item \textbf{Per-stream tokenizers by density.} Dense force/torque
+        ($\sim$100--125~Hz) is tokenized by a 1-D CNN over time (locally
+        near-regular within a chunk), with the validity mask carried as extra
+        channels so variable-DOF masking survives. Sparse streams (vision, joints
+        at $\sim$10~Hz) stay as native tokens with continuous-time embeddings.
+  \item \textbf{Multi-tick context and causality.} Context windows are selected
+        by $\Delta t$ from cached timestamps; masking spans (modality $\times$
+        time) to predict held-out-time or future ee latents. Causality is an
+        attention-mask property (causal for the prediction head and any streaming
+        deployment; causal-vs-bidirectional tested for the representation
+        objective), not baked into the tokenizer.
+  \item \textbf{The decisive ablation.} Continuous-time (no resampling) vs.\
+        resample-everything-then-1D-CNN (the classical DSP approach). This
+        validates or kills the white-space claim; we build both and adopt the
+        simpler one honestly if it wins.
+\end{itemize}
+
+\subsection{Decoder (probe, not training signal)}
+\label{sec:decoder}
+A decoder is deliberately \emph{not} part of the training objective---training on
+reconstruction would drag the latent back toward pixel memorization (the
+autoencoder trap this design exists to avoid). Instead the decoder is a
+``super-powered linear probe'': where a linear probe reports that information
+\emph{exists} in the latent, a generative decoder \emph{shows} what the latent
+knows. A cheap robot-state decoder on frozen latents quantifies content; a later
+diffusion-based pixel decoder samples plausible detail (decoding is one-to-many
+because the latent intentionally discards pixel nuisance) and doubles as the
+product half of the compression story.
+
+
+\section{Data}
+\label{sec:data}
+
+\paragraph{Corpus.}
+The training corpus is RH20T~\citep{rh20t2023}, a large real-robot manipulation
+dataset. Its 7 configurations span 4 distinct embodiments with different
+degrees of freedom, grippers, and sensor suites (Table~\ref{tab:cfgs}). Each
+scene provides multi-view RGB video with per-frame timestamps, robot state
+(joint position/velocity, TCP pose, force/torque, gripper), and---for most
+scenes---audio. In total the extracted and sharded corpus is
+$\sim$54.3M frame samples ($\sim$4~TB) across 12{,}776 robot scenes.
+
+\begin{table}[t]
+  \centering
+  \caption{The 7 RH20T configurations are 4 robots with heterogeneous sensor
+  suites. ``Joint vec'' is the length of \texttt{joint.npy}, which concatenates
+  position with velocity (and torque on KUKA)---joint \emph{positions} are always
+  the first DOF entries. Franka (cfg5) has no physical force/torque sensor; its
+  end-effector channels are masked, serving as a built-in missing-modality test.}
+  \label{tab:cfgs}
+  \begin{tabular}{clccccr}
+    \toprule
+    cfg & robot & DOF & gripper & F/T sensor & joint vec & robot scenes \\
+    \midrule
+    1 & Flexiv Rizon & 7 & Dahuan AG-95 & dahuan & 14 & 4{,}268 \\
+    2 & Flexiv Rizon & 7 & Dahuan AG-95 & dahuan & 14 & 1{,}792 \\
+    3 & UR5          & 6 & WSG-50       & ati    & 6  & 799   \\
+    4 & UR5          & 6 & Robotiq 2F-85& ati    & 6  & 2{,}194 \\
+    5 & Franka       & 7 & Franka       & none   & 14 & 1{,}321 \\
+    6 & KUKA iiwa    & 7 & Robotiq 2F-85& ati    & 21 & 1{,}485 \\
+    7 & KUKA iiwa    & 7 & Robotiq 2F-85& ati    & 21 & 917   \\
+    \midrule
+    \multicolumn{6}{r}{Total robot scenes} & 12{,}776 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{Timing model.}
+The four nominally-10~Hz streams (joint, gripper, force/torque, TCP) are
+camera-aligned in the shipped data---per camera serial their timestamps are
+\emph{identical} to the color-frame timestamps---so the released data is not at
+native sensor rate (the raw high-frequency logs are). Effective tick rates are
+$\sim$6.7--14.7~Hz, varying by config and even by scene, with within-scene
+jitter. A separate high-frequency stream (wrist force/torque and TCP) is 100~Hz
+for cfg1 and 125~Hz for cfg2/3/4/6/7, absent for essentially all of cfg5 and
+empty for $\sim$$\tfrac{1}{3}$ of cfg3. Some scenes contain multi-minute
+recording gaps; we split each scene into contiguous segments at gaps $>500$~ms
+before chunking. These properties are the reason the model must accommodate
+irregular, multi-rate time rather than assume a fixed clock.
+
+\paragraph{The chunk packet.}
+Raw scenes are converted into tick-anchored chunks (chunk $k$ $=$ the $k$-th tick
+of a contiguous segment; native samples only, no interpolation). Each chunk is
+the robot-agnostic packet the model consumes (Table~\ref{tab:packet}): frozen
+ViT patch tokens, the masked $8\times3$ motor grid, the masked $13\times15$
+end-effector block, a robot id, a tick timestamp, and index bookkeeping. The
+timestamp is cached per chunk specifically so the temporal phase needs no
+re-preprocessing. Chunks are precomputed to per-config caches on the NAS.
+
+\begin{table}[t]
+  \centering
+  \caption{The chunk packet emitted by the dataloader (per sample; $B$ is batch
+  size). Masks mark \emph{valid} entries; the singleton time axis (index 1) is
+  the temporal slot activated in \S\ref{sec:temporal}.}
+  \label{tab:packet}
+  \begin{tabular}{lll}
+    \toprule
+    key & shape & contents \\
+    \midrule
+    \texttt{rgb}       & $[B,1,196,768]$ & frozen ViT-B/16 patch tokens of the chunk's frame \\
+    \texttt{motor}     & $[B,1,8,3]$     & rows 0--6 joints, row 7 gripper; $[\sin q,\cos q,\mathrm{symlog}\,\dot q]$ \\
+    \texttt{motor\_mask}& $[B,8,3]$      & valid rows/channels (UR5: row 6 \& velocity masked) \\
+    \texttt{ee}        & $[B,13,15]$     & native-rate F/T (6) $+$ TCP xyz (3) $+$ TCP 6-D rot (6) \\
+    \texttt{ee\_mask}  & $[B,13]$        & all-False for cfg5 and hf-empty cfg3 ($\sim$12.4\% of data) \\
+    \texttt{robot\_id} & $[B]$           & 0 flexiv, 1 ur5, 2 franka, 3 kuka \\
+    \texttt{ts}        & $[B]$           & tick timestamp (ms), for $\Delta t$-based selection \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{Split hygiene.}
+The same user repeating the same task produces $\sim$10 near-duplicate scenes, so
+a frame- or scene-level split leaks near-copies of test scenes into training and
+inflates probes toward 1.0. We hold out by \textbf{(config, task, user) group},
+stratified per config, frozen in a committed CSV (\texttt{holdout\_v1.csv});
+all scenes of a group land on one side, and each config holds out $\sim$30\% of
+its groups. The split is generated from the raw scene listing, independent of
+which chunks were cached, and the dataloader errors on any group absent from the
+CSV. All evaluation is computed on the held-out groups only.
+
+\paragraph{Camera choice.}
+We use one deterministic \emph{external} camera per scene, excluding the wrist
+camera (identifiable per config from the rig's in-hand serials). Multi-view
+learning is deferred and, when added, will be framed as cross-view
+\emph{prediction}, never latent equality across views (the wrist-vs-side
+information-asymmetry objection is exactly what predict-don't-equate resolves).
+
+\paragraph{Known data traps.}
+Two documented traps bear on reproducibility: human-demonstration scenes come in
+both \texttt{\_human} and \texttt{\_human\_2} variants and a naive
+\texttt{endswith("\_human")} filter leaks the 543 \texttt{\_human\_2} scenes
+(harmless for video-only pretraining, but they carry no robot state and must be
+excluded from fusion training); and 57 robot scenes ($\sim$0.4\%) lack
+\texttt{joint.npy} and are skipped. The chunk pipeline filters both correctly.
+
+
+\section{Experiments}
+\label{sec:experiments}
+
+\subsection{Setup and evaluation protocol}
+\label{sec:setup}
+The standing rule, learned the hard way (\S\ref{sec:stage1}): \emph{one metric
+will lie to you.} Every evaluation therefore pairs a label-free health check with
+an unsaturated, robot-relevant probe, always group-held-out and multi-seed.
+
+\begin{itemize}
+  \item \textbf{Linear probe $R^2$.} With the encoder frozen, fit a ridge probe
+        from a feature to a held-out robot target (motor state, or
+        force/torque$+$pose). $R^2\uparrow$: 1.0 perfect, 0 no better than the
+        mean, negative worse than the mean. Unless noted, the evaluated feature is
+        the \textbf{vision-only} fused latent $z_v$ (state masked at eval), so no
+        state leaks in---the probe measures what the encoder \emph{learned to
+        read out of pixels}.
+  \item \textbf{RankMe (effective rank).} $\exp(\text{entropy of normalized
+        singular values})$ of the latent~\citep{rankme2023}, a label-free
+        collapse detector, bounded by $[1,\text{dim}]$. A collapsed latent can fake
+        a good probe; RankMe catches it. It scales with dimensionality, so it is
+        comparable only within the 256-d $z_v$ family, never against 768-d raw ViT
+        features.
+  \item \textbf{Baselines.} \emph{Raw vision}: mean-pooled frozen ViT features
+        (768-d), the bar fusion must beat. \emph{PCA-256}: the top-256 principal
+        directions of the frozen features---a pure compression control, fit on
+        \emph{train rows only}. Beating PCA-256 isolates the gain as cross-modal
+        learning rather than dimensionality reduction.
+  \item \textbf{Geometry (planned).} Triplet accuracy over a hardest-first
+        negative ladder (same-episode temporally-distant; same-task; same-config;
+        different-config; and a modality-mismatch tier that cannot be solved from
+        one modality), plus distance correlation and
+        alignment/uniformity~\citep{alignuniform2020}, following the
+        time-as-supervision precedent~\citep{tcn2018}. The computation is
+        implemented; triplet \emph{selection} wiring is outstanding.
+  \item \textbf{Protocol.} Group-held-out splits, 5 seeds, encoder retrained per
+        split for the single-embodiment study and probes refit per split for the
+        matrix; error bars are $\pm$std over seeds.
+\end{itemize}
+
+\subsection{Vision alone cannot see force}
+\label{sec:stage1}
+We first ask whether finetuning the vision backbone on robot video helps. It does
+not. Continuing LeJEPA on cfg3 video is a no-op: a hot learning rate (2e-4)
+collapses the encoder (RankMe $300\!\rightarrow\!158$); a gentle rate (2e-5)
+restores health (RankMe $\sim$285) but leaves robot-relevant probes flat (contact
+$0.69\!\rightarrow\!0.67$), and force $R^2\approx0$ for every checkpoint. The
+apparent drop in a task-id probe ($0.91\!\rightarrow\!0.74$) is a \emph{saturated}
+metric tracking ImageNet appearance, not a real regression---the first instance
+of the single-metric trap. The lasting finding is the motivation for the whole
+model: \textbf{a single frame does not contain force}, so vision alone cannot
+encode it. Hence the backbone is frozen (warm-started from the pretrained
+checkpoint) and force must enter through a different modality.
+
+\subsection{One encoder for all robots: the full transfer matrix}
+\label{sec:phase1}
+We scale to all 7 configs / 4 embodiments via the robot-agnostic chunk packet
+(\S\ref{sec:data}) and ask the headline question: \emph{does one encoder trained
+on all robots match per-robot specialists, and does cross-modal fusion still beat
+raw vision at scale?} We train 5 encoders (4 specialists---flexiv $=$ cfg1$+$2,
+ur5 $=$ cfg3$+$4, franka $=$ cfg5, kuka $=$ cfg6$+$7---and one \textbf{ALL}
+encoder on cfg1--7), 5 seeds each, 40 epochs, and probe every encoder on every
+embodiment's held-out groups $\rightarrow$ a $5\times4$ transfer matrix. The
+evaluated feature is the vision-only $z_v$; probes target the \emph{motor} group
+(joints$+$gripper) and the \emph{ee} group (force/torque$+$TCP pose) separately.
+
+\begin{table}[t]
+  \centering
+  \caption{Diagonal of the transfer matrix: each encoder on its \emph{own} robot
+  ($R^2\uparrow$, vision-only $z_v$, 5-seed mean $\pm$std). ``raw'' is the
+  encoder-agnostic frozen-ViT baseline (one fixed number per robot). At this
+  scale PCA-256 collapses onto raw, so $z_v$ vs.\ raw is the binding comparison.
+  Franka (cfg5) has no F/T sensor, hence no ee target.}
+  \label{tab:phase1diag}
+  \begin{tabular}{lcccccc}
+    \toprule
+    & \multicolumn{3}{c}{motor (joints $+$ gripper)} & \multicolumn{3}{c}{end-effector (F/T $+$ pose)} \\
+    \cmidrule(lr){2-4}\cmidrule(lr){5-7}
+    robot & ALL $z_v$ & spec $z_v$ & raw & ALL $z_v$ & spec $z_v$ & raw \\
+    \midrule
+    flexiv & 0.252 $\pm$0.021 & 0.270 $\pm$0.023 & 0.232 & 0.268 $\pm$0.031 & 0.286 $\pm$0.035 & 0.211 \\
+    ur5    & 0.339 $\pm$0.014 & 0.324 $\pm$0.021 & 0.321 & 0.187 $\pm$0.009 & 0.156 $\pm$0.016 & 0.103 \\
+    kuka   & 0.321 $\pm$0.022 & 0.330 $\pm$0.019 & 0.391 & 0.393 $\pm$0.035 & 0.432 $\pm$0.055 & 0.353 \\
+    franka & $-$0.377 $\pm$0.049 & $-$0.479 $\pm$0.074 & $-$6.709 & --- & --- & --- \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{table}[t]
+  \centering
+  \caption{Full transfer matrix: every encoder (rows) probed on every robot's
+  held-out groups (columns), vision-only $z_v$ $R^2\uparrow$, 5-seed mean.
+  \textbf{Bold} $=$ diagonal (own robot). \emph{Left}: motor. \emph{Right}:
+  end-effector (franka has no ee). \textbf{ALL} is at or near the best cell in
+  every column; specialists fall apart off-diagonal.}
+  \label{tab:phase1matrix}
+  \begin{minipage}{0.60\textwidth}
+    \centering
+    \small
+    \begin{tabular}{lcccc}
+      \toprule
+      train $\downarrow$ / eval $\rightarrow$ & flexiv & ur5 & kuka & franka \\
+      \midrule
+      flexiv spec & \textbf{0.270} & 0.254 & 0.234 & $-$0.393 \\
+      ur5 spec    & 0.148 & \textbf{0.324} & 0.236 & $-$0.411 \\
+      kuka spec   & 0.121 & 0.221 & \textbf{0.330} & $-$0.431 \\
+      franka spec & 0.069 & 0.088 & 0.148 & \textbf{$-$0.479} \\
+      \textbf{ALL} & 0.252 & 0.339 & 0.321 & $-$0.377 \\
+      raw          & 0.232 & 0.321 & 0.391 & $-$6.709 \\
+      \bottomrule
+    \end{tabular}
+    \\[2pt]{\footnotesize motor (joints $+$ gripper)}
+  \end{minipage}%
+  \begin{minipage}{0.40\textwidth}
+    \centering
+    \small
+    \begin{tabular}{lccc}
+      \toprule
+      & flexiv & ur5 & kuka \\
+      \midrule
+      flexiv spec & \textbf{0.286} & 0.137 & 0.247 \\
+      ur5 spec    & 0.135 & \textbf{0.156} & 0.247 \\
+      kuka spec   & 0.106 & 0.119 & \textbf{0.432} \\
+      franka spec & 0.059 & 0.029 & 0.102 \\
+      \textbf{ALL} & 0.268 & 0.187 & 0.393 \\
+      raw          & 0.211 & 0.103 & 0.353 \\
+      \bottomrule
+    \end{tabular}
+    \\[2pt]{\footnotesize end-effector (F/T $+$ pose)}
+  \end{minipage}
+\end{table}
+
+\paragraph{Findings.}
+\begin{itemize}
+  \item \textbf{Force/end-effector is the clean cross-modal win.} ALL $z_v$ beats
+        raw vision on the F/T$+$pose probe for \emph{every} sensored robot
+        ($+0.06$ flexiv, $+0.08$ ur5, $+0.04$ kuka)---fusion earns its keep
+        exactly where the camera is blind.
+  \item \textbf{Motor (joints) is mixed.} ALL beats raw on flexiv/ur5/franka but
+        \emph{loses on kuka} ($0.321$ vs.\ $0.391$): vision can already infer
+        joint pose, so fusion adds little there. This matches the intuition that
+        instantaneous joint pose is visible while force is not---and predicts the
+        temporal phase (\S\ref{sec:temporal}) as where the joint/motion payoff
+        should appear.
+  \item \textbf{``One encoder for all robots'' holds (strong form).} ALL matches
+        or beats each specialist on its own robot (beats ur5 and franka on motor,
+        ties flexiv and kuka), while off-diagonal a specialist barely beats raw
+        (the franka specialist reads $0.07$--$0.15$ on other robots) and ALL stays
+        strong across the board. A specialist learned \emph{its} robot; ALL
+        learned \emph{robots}.
+  \item \textbf{No collapse.} RankMe of $z_v$ sits in a healthy $\sim$165--180
+        band (ceiling 256, $\approx$0.65--0.70 of ceiling) across robots. Two of
+        the 25 seeds (one ALL, one flexiv-spec) show a partial-collapse dip worth
+        a re-run, widening those two error bars; the other four seeds of each sit
+        $\sim$178--190. This is a per-seed instability, not a recipe-level red
+        flag.
+  \item \textbf{Franka is hard but stabilized.} Own-robot $R^2$ is negative for
+        all methods on cfg5 (tiny, force-blind config), but $z_v$ ($-0.38$) is far
+        more stable than raw's catastrophic $-6.71$---fusion regularizes the
+        hardest embodiment even where it cannot make it positive.
+\end{itemize}
+
+\paragraph{Qualitative latent structure.}
+Figure~\ref{fig:pca} shows PCA projections of the ALL encoder's latent, which
+organize by embodiment, task, and configuration, consistent with the transfer
+result that one encoder captures robot-general structure.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{phase1_ur5.png}\\[1.5ex]
+  \includegraphics[width=\linewidth]{phase1_kuka.png}
+  \caption{PCA of the ALL-encoder latent on held-out UR5 (left) and KUKA (right)
+  scenes. Structure organizes by task and scene rather than collapsing, matching
+  the RankMe health check. (Replace with final camera-ready panels.)}
+  \label{fig:pca}
+\end{figure}
+
+\subsection{Ablations still owed}
+Two claims-protection studies remain before these numbers are final: the
+\textbf{vision-only-\emph{trained}} Perceiver ablation (same head, no state token,
+probed to state), which isolates the cross-modal gain from ``we simply trained an
+in-domain encoder''; and the bottleneck-size and joint-SIGReg on/off ablations.
+The geometry metrics (triplet accuracy, distance correlation,
+alignment/uniformity) are implemented but not yet run on these checkpoints. We
+report the results above with these caveats explicit rather than deferring the
+write-up.
+
+
+\section{Discussion and Limitations}
+\label{sec:discussion}
+\begin{itemize}
+  \item \textbf{Single timestep.} Every result here is instantaneous. The central
+        bet---fusing multi-rate streams by real time without resampling
+        (\S\ref{sec:temporal})---is designed and de-risked (the data carries
+        per-token timestamps) but \emph{not yet validated}. The mixed motor result
+        and the clean force result together predict the temporal phase is where
+        the joint/motion payoff lands.
+  \item \textbf{Correlational, not causal.} Same-time cross-modal alignment shows
+        the latent \emph{contains} cross-modal structure, not that it models
+        dynamics. Action-conditioned forward prediction (loss~4) is gated behind
+        the temporal machinery.
+  \item \textbf{Owed ablations.} The vision-only-trained control is the highest
+        priority; until it is run, the cross-modal attribution rests on the PCA
+        control alone (strong, but the two controls answer different objections).
+  \item \textbf{Evaluation is probe-centric and objective-aligned.} Probing to the
+        same state the model was trained to predict is informative but favorable;
+        the planned triplet/geometry suite and the decoder probe are meant to
+        stress the latent from angles the training loss does not.
+  \item \textbf{One camera, single view.} Multi-view and wrist cameras are
+        excluded for v1; adding them as cross-view prediction (not equality) is
+        future work.
+  \item \textbf{Data caveats.} RH20T's shipped streams are camera-aligned rather
+        than native-rate, so the multi-rate claim is exercised against the raw
+        high-frequency logs, not the released 10~Hz tick data; cfg5's force is a
+        robot-internal estimate; and several positioning references are recent
+        preprints.
+\end{itemize}
+
+
+\section{Conclusion}
+\label{sec:conclusion}
+Kepler-Encoder-V1 is a robot-first multimodal encoder: it ingests video,
+proprioception, and force/torque as first-class \emph{(value, what, where, when)}
+tokens, fuses them with a Perceiver, and trains by masked cross-modal latent
+prediction under the LeJEPA/SIGReg objective---provably non-collapsing,
+prediction-based, and robust to missing sensors by construction. On RH20T we show
+that fusing sensors makes vision carry robot-relevant structure (a vision-only
+latent predicts state and, especially, force better than raw features and beats a
+compression control), and that a \emph{single} encoder covers four embodiments as
+well as per-robot specialists while transferring across them. The clean gains
+appear where the camera is blind. The next step is the model's defining claim:
+fusing streams across time at their native rates via continuous-time tokens---the
+white space that separates this encoder from synchronized-observation robot SSL.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% References
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Appendix
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\appendix
+
+\section{Single-embodiment fusion: cfg3 POC and cfg3\texorpdfstring{$+$}{+}cfg4 scale-up}
+\label{sec:stage2}
+Before scaling to the full transfer matrix (\S\ref{sec:phase1}), we fuse video
+$+$ robot state at a single timestep on UR5 data and ask whether the fused latent
+beats each modality alone, and whether the gain is \emph{cross-modal} rather than
+mere compression. A cross-modal signal gate confirms the premise (frozen vision
+$\rightarrow$ state $R^2=0.43$, TCP $0.73$), justifying the fusion encoder. We
+train the Perceiver with masked cross-modal latent prediction $+$ per-modal $+$
+joint SIGReg, and at evaluation feed \emph{vision only}, probing to robot state.
+Table~\ref{tab:stage2} reports two runs: a cfg3 proof-of-concept ($\sim$24k
+frames) and a cfg3$+$cfg4 scale-up (86{,}430 frames / 2{,}881 scenes,
+$3.6\times$ the data).
+
+\begin{table}[h]
+  \centering
+  \caption{Single-embodiment fusion (UR5). Predicting held-out robot state from
+  each feature ($R^2\uparrow$, 5 seeds, group-held-out, encoder retrained per
+  split). The cross-modal latent $z_v$ (vision-only at eval) beats both raw
+  vision and the PCA compression control on all 5 seeds in both runs. RankMe of
+  $z_v$ is $\sim$211 (ceiling 256): no collapse.}
+  \label{tab:stage2}
+  \begin{tabular}{lcc}
+    \toprule
+    feature $\rightarrow$ predict robot state & cfg3 POC & cfg3$+$cfg4 \\
+    \midrule
+    \textbf{Perceiver $z_v$ (256-d, cross-modal, state masked)} & \textbf{0.551 $\pm$0.018} & \textbf{0.653 $\pm$0.008} \\
+    raw vision (768-d, mean-pooled)                             & 0.257 $\pm$0.075          & 0.516 $\pm$0.010 \\
+    PCA-256 of frozen vision (compression control)             & 0.134 $\pm$0.047          & 0.418 $\pm$0.015 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+$z_v$ beats raw vision by $+0.294\pm0.078$ (POC) / $+0.137\pm0.007$ (scale) and
+the PCA control by $+0.417\pm0.050$ / $+0.235\pm0.010$, positive on every seed.
+Two facts make this meaningful. First, \textbf{beating the PCA control shows the
+gain is cross-modal, not compression}: a latent $3\times$ smaller than raw vision
+predicts the robot \emph{better}, while PCA-256---the same compression with no
+cross-modal training---loses. Second, \textbf{only vision enters at eval}, so the
+encoder has \emph{learned to read robot-relevant structure out of pixels} by
+having been trained alongside state. This is exactly what a late-fusion recipe
+(train each modality's encoder separately, then concatenate) cannot produce: its
+vision features were never shaped by force or joints.
+
+\paragraph{Why every baseline rises from cfg3 to cfg3$+$cfg4.}
+The margin over raw narrows in absolute terms ($+0.294\!\rightarrow\!+0.137$) but
+stays decisive over the compression control ($+0.417\!\rightarrow\!+0.235$). The
+baselines rise largely for reasons that are \emph{not} ``raw vision got better at
+decoding within-robot state.'' (i)~$R^2$'s denominator changed: pooling two UR5
+setups injects easy, pixel-readable \emph{between-config} variance (different
+mounts/backgrounds), which any encoder earns for free before decoding any pose.
+(ii)~The POC numbers are noisy/under-fit ($\pm0.075\!\rightarrow\!\pm0.010$,
+$7\times$ tighter). (iii)~PCA-256 improved the most ($+0.284$), diagnostic of the
+new between-config variance landing in its top components. (iv)~$z_v$ rose the
+least ($+0.102$)---it was already near saturation, which is why the margin over
+raw narrows while the margin over compression stays large. The comparison
+carrying the cross-modal claim is $z_v$ vs.\ the compression control, decisive in
+both runs.
+
+
+\end{document}

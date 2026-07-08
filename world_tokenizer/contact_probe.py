@@ -17,16 +17,18 @@ import torch
 from sklearn.linear_model import LogisticRegression
 from sklearn.neighbors import KNeighborsClassifier
 
+import rh20t_api
 from rh20t_api.configurations import load_conf
 from rh20t_api.scene import RH20TScene
 from world_tokenizer.model import LeJEPAVideo
 from world_tokenizer.probe_curve import CKPT, FRAMES, embed
 
-RAW = "/mnt/nas/data/RH20T/cfg3_raw/RH20T_cfg3"
-CONF = os.path.join(os.environ["WAE_ROOT"], "deps/rh20t_api/configs/configs.json")
+RAW = "/mnt/nas/data/RH20T/raw/RH20T_cfg3"
+# configs.json ships at the root of the rh20t_api repo, next to the package dir
+CONF = os.path.join(os.path.dirname(os.path.dirname(rh20t_api.__file__)), "configs", "configs.json")
 
 
-def sample_with_force(frames_root, confs, per_scene, max_scenes):
+def sample_with_force(raw_root, frames_root, confs, per_scene, max_scenes):
     """(path, scene, |force|) for strided frames across scenes; force via get_ft_aligned."""
     rows = []
     scenes = sorted(d for d in os.listdir(frames_root) if d.startswith("task_"))
@@ -35,7 +37,7 @@ def sample_with_force(frames_root, confs, per_scene, max_scenes):
         if not cams:
             continue
         try:
-            scene = RH20TScene(os.path.join(RAW, sc), confs)
+            scene = RH20TScene(os.path.join(raw_root, sc), confs)
         except Exception:
             continue
         fs = sorted(os.listdir(cams[0]))
@@ -67,6 +69,8 @@ def scene_split(scenes_of_rows, test_frac=0.3, seed=0):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--frames-root", default=FRAMES)
+    ap.add_argument("--raw-root", default=RAW, help="dir of raw RH20T_cfg* scene folders")
+    ap.add_argument("--conf", default=CONF, help="rh20t_api configs.json")
     ap.add_argument("--ckpts", nargs="+", default=["e0", "e6"])
     ap.add_argument("--ckpt-template", default=CKPT)
     ap.add_argument("--per-scene", type=int, default=20)
@@ -75,8 +79,8 @@ def main():
     args = ap.parse_args()
     dev = "cuda" if torch.cuda.is_available() else "cpu"
 
-    confs = load_conf(CONF)
-    rows = sample_with_force(args.frames_root, confs, args.per_scene, args.max_scenes)
+    confs = load_conf(args.conf)
+    rows = sample_with_force(args.raw_root, args.frames_root, confs, args.per_scene, args.max_scenes)
     paths = [r[0] for r in rows]
     scenes = [r[1] for r in rows]
     fmag = np.array([r[2] for r in rows])
