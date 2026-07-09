@@ -114,7 +114,14 @@ Two commitments shape the design choices that follow. First, \textbf{encoder-fir
 
 \subsection{Token representation: \emph{(value, what, where)}}
 \label{sec:tokenization}
-Every sensor reading is embedded as a token carrying three components: its \emph{value}, a per-modality encoding of the measurement itself; its \emph{what}, a learned modality embedding that tags the token as vision, joints, gripper, force-torque, and so on, so the fuser can route by source; and its \emph{where}, a spatial position that image patch tokens carry and non-spatial state tokens omit. The \emph{value} component uses a distinct tokenizer per modality, described below.
+Every sensor reading is embedded as a token carrying four components (Figure~\ref{fig:token}).
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.7\linewidth]{fig_token_anatomy.png}
+  \caption{Every sensor reading becomes a token of \emph{(value, what, where, when)}: a per-modality tokenizer (value), a learned modality embedding (what), spatial position (where), and a continuous-time (mTAN) embedding of the real timestamp (when). The \emph{when} slot is what lets streams at different native rates fuse without resampling; in the single-timestep model of this report it is constant.}
+  \label{fig:token}
+\end{figure}
 
 \begin{itemize}
   \item \textbf{Vision.} Patch tokens from a \emph{frozen} LeJEPA ViT-B/16
@@ -133,9 +140,9 @@ Different robots expose different joint counts (6 for UR5, 7 for Flexiv, Franka,
 
 \begin{figure}[!htbp]
   \centering
-  \includegraphics[width=0.86\linewidth]{mm_perceiver2_arch.png}
-  \caption{\textbf{The cross-attention fuser (single-timestep
-  configuration).} Three heterogeneous streams (frozen ViT-B/16 patch tokens, the $8\times3$ motor grid, and the $13\times15$ end-effector window) are each linearly projected to the shared width $d{=}256$ and tagged with modality and position embeddings, forming a $217$-token context set in which every token carries \emph{(value, what, where)}. Eight learned queries cross-attend to this set (depth 2) and are mean-pooled into the fused latent~$z$. Training uses \emph{masked cross-modal prediction}: an attention mask hides one modality and $z$ must predict that modality's EMA-target embedding (predict-do-not-equate, MSE), regularized by per-modality and joint SIGReg. At evaluation only vision enters (motor and ee masked) and $z_v$ is the exported latent. Blue denotes trainable projections, green the fuser, purple the latent, and red the losses; the frozen backbone and EMA targets carry no encoder gradient.}
+  \includegraphics[width=0.78\linewidth]{fig_architecture.png}
+  \caption{\textbf{The \texttt{MMPerceiver} fuser (single-timestep
+  configuration).} Three heterogeneous streams---frozen ViT-B/16 patch tokens, the $8\times3$ motor grid, and the $13\times15$ end-effector window---are each linearly projected to the shared width $d{=}256$ and tagged with modality/position embeddings, forming a $217$-token context set in which every token carries \emph{(value, what, where, when)}. Eight learned queries cross-attend to this set (Perceiver-IO style, depth 2) and are mean-pooled into the fused latent~$z$. Training is \emph{masked cross-modal prediction}: an attention mask hides one modality and $z$ must predict that modality's EMA-target embedding (predict-don't-equate, MSE), regularized by per-modality and joint SIGReg. At evaluation only vision enters (motor/ee masked) and $z_v$ is the exported latent. Modality-colored inputs (vision blue, motor teal, ee orange); grey $=$ frozen backbone, green $=$ Perceiver, purple $=$ latent, red $=$ the LeJEPA objective.}
   \label{fig:arch}
 \end{figure}
 
@@ -163,7 +170,36 @@ Training combines a cross-modal predictive signal with two anti-collapse regular
         cross-modal alignment is only correlational. Predicting future latents from actions is the causal component that would justify the term ``world model.'' It is not used in this report (\S\ref{sec:discussion}).
 \end{enumerate}
 
-The EMA target encoder is a slow copy of the online encoder, the momentum-target mechanism that stabilizes predictive SSL~\citep{data2vec2022}. SIGReg is the \texttt{SlicedEppsPulley} objective from LeJEPA~\citep{lejepa2025}, which replaces the usual anti-collapse heuristics (stop-gradient, predictor asymmetry, teacher momentum) with an explicit distributional constraint, and collapse is instead monitored directly with RankMe~\citep{rankme2023}. Only the fusion head and the per-modality projections train; the vision backbone remains frozen.
+The EMA target encoder is a slow copy of the online encoder, the momentum-target mechanism that stabilizes predictive SSL~\citep{data2vec2022}; SIGReg is the \texttt{SlicedEppsPulley} objective from LeJEPA~\citep{lejepa2025}, which replaces the usual anti-collapse heuristics (stop-gradient, predictor asymmetry, teacher momentum) with an explicit distributional constraint---collapse is instead monitored directly with RankMe~\citep{rankme2023}. Only the fusion head and the per-modality projections train; the vision backbone stays frozen.
+
+\begin{figure}[!htbp]
+  \centering
+  \includegraphics[width=0.82\linewidth]{fig_loss.png}
+  \caption{Masked cross-modal prediction (shown hiding vision; the hidden modality rotates over vision/motor/ee). The online encoder fuses the visible modalities into $z$; a predictor maps $z$ to the masked modality's latent, whose target is that modality's embedding from an EMA (slow) copy of the encoder---JEPA-style predict-the-latent, not pixel reconstruction. The loss is $\mathrm{MSE}(\text{prediction},\text{target})$ plus per-modality and joint SIGReg (LeJEPA), which prevents collapse.}
+  \label{fig:loss}
+\end{figure}
+
+\subsection{Continuous-time, multi-rate extension}
+\label{sec:temporal}
+The single-timestep model validates modality fusion; the central architectural hypothesis is fusing streams \emph{across time at their native rates}. The data side already supports it (tick-anchored native-rate windows with per-token timestamps, \S\ref{sec:data}); the remaining work is model-side.
+
+\begin{figure}[!htbp]
+  \centering
+  \includegraphics[width=0.9\linewidth]{fig_temporal.png}
+  \caption{The continuous-time, multi-rate extension. Streams arrive at different native rates---vision $\sim$10~Hz, proprioception and force $\sim$100~Hz---each sample carrying an mTAN continuous-time embedding of its real timestamp, so the Perceiver fuses them by real time with no resampling to a common clock and no zero-padding. The single-timestep model of this paper is the one-tick special case.}
+  \label{fig:temporal}
+\end{figure}
+
+\begin{itemize}
+  \item \textbf{Continuous-time embedding (the \emph{when} slot).} We embed each
+        token's real timestamp with a Fourier / Time2Vec feature map~\citep{time2vec2019} using fixed, \emph{log-spaced} frequencies, upgradable to learned frequencies (mTAN proper~\citep{mtan2021}) behind the same interface. We deliberately take only mTAN's continuous-time \emph{embedding}, not the whole network: the Perceiver already supplies mTAN's other half (learned queries are the reference points; cross-attention is attention-to-observations), a point COPER makes architecturally explicit~\citep{coper2022}. The make-or-break knob is the frequency band, which must span $\sim$ms (100~Hz force) to seconds (multi-second episodes).
+  \item \textbf{Per-stream tokenizers by density.} Dense force/torque
+        ($\sim$100--125~Hz) is tokenized by a 1-D CNN over time (locally near-regular within a chunk), with the validity mask carried as extra channels so variable-DOF masking survives. Sparse streams (vision, joints at $\sim$10~Hz) stay as native tokens with continuous-time embeddings.
+  \item \textbf{Multi-tick context and causality.} Context windows are selected
+        by $\Delta t$ from cached timestamps; masking spans (modality $\times$ time) to predict held-out-time or future ee latents. Causality is an attention-mask property (causal for the prediction head and any streaming deployment; causal-vs-bidirectional tested for the representation objective), not baked into the tokenizer.
+  \item \textbf{The decisive ablation.} Continuous-time (no resampling) vs.\
+        resample-everything-then-1D-CNN (the classical DSP approach). This validates or kills the white-space claim; we build both and adopt the simpler one honestly if it wins.
+\end{itemize}
 
 \subsection{Decoder (probe, not training signal)}
 \label{sec:decoder}
