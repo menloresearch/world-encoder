@@ -173,14 +173,21 @@ its \emph{real timestamp}. In the single-timestep model of this report all token
 \paragraph{Robot-agnostic state via masking, not truncation.}
 Different robots expose different joint counts (6 for UR5, 7 for Flexiv/Franka/ KUKA) and different sensor suites (Franka has no physical force/torque sensor). Rather than defining a per-robot state vector, we fix the $8\times3$ motor grid and $13\times15$ ee block for \emph{all} robots and \emph{mask} the rows/channels a given robot does not populate. This (a) lets one architecture span every embodiment, (b) keeps joints as first-class tokens instead of dropping them, and (c) makes a missing modality identical to a masked one---so Franka's absent force sensor is a built-in missing-modality robustness test rather than a special case.
 
+\begin{figure}[!htbp]
+  \centering
+  \includegraphics[width=0.72\linewidth]{fig_token_anatomy.png}
+  \caption{Every sensor reading becomes a token of \emph{(value, what, where, when)}: a per-modality tokenizer (value), a learned modality embedding (what), spatial position (where), and a continuous-time (mTAN) embedding of the real timestamp (when). The \emph{when} slot is what lets streams at different native rates fuse without resampling; in the single-timestep model of this report it is constant.}
+  \label{fig:token}
+\end{figure}
+
 \subsection{Architecture: the Perceiver fuser}
 \label{sec:arch}
 
 \begin{figure}[!htbp]
   \centering
-  \includegraphics[width=0.86\linewidth]{mm_perceiver2_arch.png}
+  \includegraphics[width=0.78\linewidth]{fig_architecture.png}
   \caption{\textbf{The \texttt{MMPerceiver} fuser (single-timestep
-  configuration).} Three heterogeneous streams---frozen ViT-B/16 patch tokens, the $8\times3$ motor grid, and the $13\times15$ end-effector window---are each linearly projected to the shared width $d{=}256$ and tagged with modality/position embeddings, forming a $217$-token context set in which every token carries \emph{(value, what, where, when)}. Eight learned queries cross-attend to this set (Perceiver-IO style, depth 2) and are mean-pooled into the fused latent~$z$. Training is \emph{masked cross-modal prediction}: an attention mask hides one modality and $z$ must predict that modality's EMA-target embedding (predict-don't-equate, MSE), regularized by per-modality and joint SIGReg. At evaluation only vision enters (motor/ee masked) and $z_v$ is the exported latent. Blue $=$ trainable projections, green $=$ the fuser, purple $=$ the latent, red $=$ losses; the frozen backbone and EMA targets carry no encoder gradient.}
+  configuration).} Three heterogeneous streams---frozen ViT-B/16 patch tokens, the $8\times3$ motor grid, and the $13\times15$ end-effector window---are each linearly projected to the shared width $d{=}256$ and tagged with modality/position embeddings, forming a $217$-token context set in which every token carries \emph{(value, what, where, when)}. Eight learned queries cross-attend to this set (Perceiver-IO style, depth 2) and are mean-pooled into the fused latent~$z$. Training is \emph{masked cross-modal prediction}: an attention mask hides one modality and $z$ must predict that modality's EMA-target embedding (predict-don't-equate, MSE), regularized by per-modality and joint SIGReg. At evaluation only vision enters (motor/ee masked) and $z_v$ is the exported latent. Modality-colored inputs (vision blue, motor teal, ee orange); grey $=$ frozen backbone, green $=$ Perceiver, purple $=$ latent, red $=$ the LeJEPA objective.}
   \label{fig:arch}
 \end{figure}
 
@@ -210,9 +217,23 @@ Training combines a cross-modal predictive signal with two anti-collapse regular
 
 The EMA target encoder is a slow copy of the online encoder, the momentum-target mechanism that stabilizes predictive SSL~\citep{data2vec2022}; SIGReg is the \texttt{SlicedEppsPulley} objective from LeJEPA~\citep{lejepa2025}, which replaces the usual anti-collapse heuristics (stop-gradient, predictor asymmetry, teacher momentum) with an explicit distributional constraint---collapse is instead monitored directly with RankMe~\citep{rankme2023}. Only the fusion head and the per-modality projections train; the vision backbone stays frozen.
 
+\begin{figure}[!htbp]
+  \centering
+  \includegraphics[width=0.82\linewidth]{fig_loss.png}
+  \caption{Masked cross-modal prediction (shown hiding vision; the hidden modality rotates over vision/motor/ee). The online encoder fuses the visible modalities into $z$; a predictor maps $z$ to the masked modality's latent, whose target is that modality's embedding from an EMA (slow) copy of the encoder---JEPA-style predict-the-latent, not pixel reconstruction. The loss is $\mathrm{MSE}(\text{prediction},\text{target})$ plus per-modality and joint SIGReg (LeJEPA), which prevents collapse.}
+  \label{fig:loss}
+\end{figure}
+
 \subsection{Continuous-time, multi-rate extension}
 \label{sec:temporal}
 The single-timestep model validates modality fusion; the central architectural hypothesis is fusing streams \emph{across time at their native rates}. The data side already supports it (tick-anchored native-rate windows with per-token timestamps, \S\ref{sec:data}); the remaining work is model-side.
+
+\begin{figure}[!htbp]
+  \centering
+  \includegraphics[width=0.9\linewidth]{fig_temporal.png}
+  \caption{The continuous-time, multi-rate extension. Streams arrive at different native rates---vision $\sim$10~Hz, proprioception and force $\sim$100~Hz---each sample carrying an mTAN continuous-time embedding of its real timestamp, so the Perceiver fuses them by real time with no resampling to a common clock and no zero-padding. The single-timestep model of this paper is the one-tick special case.}
+  \label{fig:temporal}
+\end{figure}
 
 \begin{itemize}
   \item \textbf{Continuous-time embedding (the \emph{when} slot).} We embed each
