@@ -58,25 +58,9 @@
 \section{Introduction}
 \label{sec:intro}
 
-\paragraph{The problem.}
-\begin{itemize}
-  \item A robot senses through many heterogeneous channels---RGB video,
-        joint encoders, force/torque, gripper state, later audio and IMU---each streaming at a different, irregular native rate (cameras $\sim$7--15~Hz and jittery; force/torque $\sim$100--125~Hz).
-  \item Almost every robot-learning system today follows the vision(-language)
-        encoder paradigm~\citep{openvla2024}: a vision backbone produces the representation, and robot state is appended downstream as raw numbers. The encoder never sees force, joints, or contact.
-  \item Learning a \emph{single} representation that unifies these streams
-        across modalities and across embodiments remains open.
-\end{itemize}
+A robot that reasons about its own body from video alone reasons about a body it cannot fully see. Force, contact, and joint torque leave little reliable trace in a single RGB frame: we confirm this directly, and find that force is essentially unpredictable from vision alone ($R^2 \approx 0$; \S\ref{sec:stage1}). It is common practice to encode robot observations with a vision-only backbone and to represent robot state separately, appended downstream as raw numbers~\citep{openvla2024}. This inheritance from internet-scale vision pretraining deserves a second look. On the internet, an image is disembodied: it could depict anything. On a robot, the images arriving through the camera are a narrow subset of all possible images, and which subset is determined by the state of the robot. What the camera sees, and what it fails to see, is tightly coupled to joint configuration, gripper aperture, and contact. Thus, our view is that vision and state are are two views of the same underlying body state and encoding them jointly should let each inform the other to create a better overall representation of the world.
 
-\paragraph{Why an encoder, and why it must be multimodal.}
-\begin{itemize}
-  \item \textbf{Everything downstream is bounded by what survives the encoder.}
-        If force never enters the latent, no world model or policy built on top can reason about contact. We verify the failure directly: a single video frame does not contain force, so force is essentially unpredictable from vision alone ($R^2 \approx 0$; \S\ref{sec:stage1}).
-  \item The encoder is therefore the load-bearing component---and the reusable
-        asset: train it once with self-supervision and every downstream task inherits it, evaluated cheaply with linear probes instead of retraining a full policy.
-  \item A shared latent also doubles as \emph{compression} for shipping sensor
-        data edge~$\rightarrow$~cloud.
-\end{itemize}
+This coupling motivates treating robot state as a modality of data in its own right. Joint encoders, force/torque, and gripper aperture describe the body that the camera only partially reveals, and encoding them jointly with vision lets each stream constrain the other. We present \textbf{Kepler-Encoder-v1}, a robot-first multimodal embedding model that maps vision and robot state into a single shared latent space. Because state and vision share this latent, the robot can perceive its own body even when that body lies outside the camera frame, and the resulting representation carries force and proprioception rather than appearance alone.
 
 \paragraph{Why self-supervised, why JEPA, why LeJEPA.}
 \begin{itemize}
