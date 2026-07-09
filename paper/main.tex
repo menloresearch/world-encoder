@@ -149,7 +149,14 @@ Three commitments shape every choice below. (i)~\textbf{Encoder-first:} the repr
 
 \subsection{Token representation: \emph{(value, what, where, when)}}
 \label{sec:tokenization}
-Every sensor reading is embedded as a token carrying four components.
+Every sensor reading is embedded as a token carrying four components (Figure~\ref{fig:token}).
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.7\linewidth]{fig_token_anatomy.png}
+  \caption{Every sensor reading becomes a token of \emph{(value, what, where, when)}: a per-modality tokenizer (value), a learned modality embedding (what), spatial position (where), and a continuous-time (mTAN) embedding of the real timestamp (when). The \emph{when} slot is what lets streams at different native rates fuse without resampling; in the single-timestep model of this report it is constant.}
+  \label{fig:token}
+\end{figure}
 
 \paragraph{Value---per-modality tokenizers.}
 \begin{itemize}
@@ -172,13 +179,6 @@ its \emph{real timestamp}. In the single-timestep model of this report all token
 
 \paragraph{Robot-agnostic state via masking, not truncation.}
 Different robots expose different joint counts (6 for UR5, 7 for Flexiv/Franka/ KUKA) and different sensor suites (Franka has no physical force/torque sensor). Rather than defining a per-robot state vector, we fix the $8\times3$ motor grid and $13\times15$ ee block for \emph{all} robots and \emph{mask} the rows/channels a given robot does not populate. This (a) lets one architecture span every embodiment, (b) keeps joints as first-class tokens instead of dropping them, and (c) makes a missing modality identical to a masked one---so Franka's absent force sensor is a built-in missing-modality robustness test rather than a special case.
-
-\begin{figure}[!htbp]
-  \centering
-  \includegraphics[width=0.72\linewidth]{fig_token_anatomy.png}
-  \caption{Every sensor reading becomes a token of \emph{(value, what, where, when)}: a per-modality tokenizer (value), a learned modality embedding (what), spatial position (where), and a continuous-time (mTAN) embedding of the real timestamp (when). The \emph{when} slot is what lets streams at different native rates fuse without resampling; in the single-timestep model of this report it is constant.}
-  \label{fig:token}
-\end{figure}
 
 \subsection{Architecture: the Perceiver fuser}
 \label{sec:arch}
