@@ -140,14 +140,7 @@ with $\operatorname{sg}[\cdot]$ the stop-gradient and $h_k$ a per-modality predi
 \label{sec:tokenization}
 Two commitments shape the choices in this section. First, \textbf{encoder-first}, meaning the learned representation is the primary deliverable, and because downstream models consume the latent, the latent must retain the information those models require, including force and contact. Second, \textbf{predict, do not equate}, so fusion is learned by cross-modal \emph{prediction} rather than by forcing modalities into agreement. Prediction respects the information asymmetry between sensors and confers robustness to missing sensors without additional machinery.
 
-Every sensor reading is embedded as a token that carries its tokenized value, a learned modality embedding, and a spatial position (Figure~\ref{fig:token}).
-
-\begin{figure}[t]
-  \centering
-  \includegraphics[width=0.7\linewidth]{fig_token_anatomy.png}
-  \caption{Every sensor reading becomes a token built from four parts, namely a per-modality tokenizer of the value, a learned modality embedding, a spatial position, and a continuous-time (mTAN) embedding of the real timestamp. The continuous-time part is what lets streams at different native rates fuse without resampling; in the single-timestep model of this report it is constant.}
-  \label{fig:token}
-\end{figure}
+Every sensor reading is embedded as a token that carries its tokenized value, a learned modality embedding, a spatial position, and a continuous-time embedding of its timestamp (constant in the single-timestep model of this report; \S\ref{sec:temporal}).
 
 \begin{itemize}
   \item \textbf{Vision.} Patch tokens from a \emph{frozen} LeJEPA ViT-B/16
