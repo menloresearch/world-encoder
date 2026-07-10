@@ -1,4 +1,5 @@
 *.claude
+.DS_Store
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -224,3 +225,4 @@ __marimo__/
 /stable-pretraining/
 pca_viz_out/
 viz_out/
+/blog/menlo.ai/
