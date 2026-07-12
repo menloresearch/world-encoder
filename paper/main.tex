@@ -592,6 +592,25 @@ The most consequential limitation is that every result in this report comes from
 
 The claims here are correlational rather than causal. Same-time cross-modal alignment shows that the latent \emph{contains} cross-modal structure, not that it models dynamics, and action-conditioned forward prediction depends on the continuous-time machinery of \S\ref{sec:temporal} and is not attempted. The evaluation is also probe-centric and aligned with the training objective, and probing to the same state the model was trained to predict is informative but favorable, so the planned triplet and geometry suite, together with the decoder probe, are meant to stress the latent from angles the training loss does not reward. Attribution of the gain to cross-modal learning rests on the two controls of \S\ref{sec:ablations}, which separately rule out dimensionality reduction and in-domain training.
 
+\paragraph{Embodiment-agnostic, but not zero-shot to unseen robots.} The transfer matrix (\S\ref{sec:phase1}) and the data-budget-matched control (\S\ref{sec:ablations}) establish that one encoder covers the robots \emph{in its training mix}, and that this coverage reflects embodiment diversity rather than data volume. It does not follow that the encoder generalizes to an \emph{unseen} embodiment, and a leave-one-robot-out test (train on three robots, probe the held-out fourth, 5-seed) shows it does not. The zero-shot vision-only latent trails raw ViT on the held-out robot's motor probe by $0.03$--$0.13$ (Table~\ref{tab:loro}), so the fused vision path tunes to the training embodiments' visual domains and generic frozen-ViT features are more robust on a new one. Two nuances temper this: on the degenerate franka config the latent is far more stable than raw ($-0.46$ vs.\ $-6.71$), and the ur5 force/EE probe is the one case where zero-shot fusion beats raw ($+0.06$). Embodiment-agnosticism here therefore means one encoder for the robots it trained on, not zero-shot transfer to new ones; closing that gap with few-shot adaptation and a broader embodiment set is future work.
+
+\begin{table}[!htbp]
+  \centering
+  \small
+  \caption{Zero-shot leave-one-robot-out (vision-only $z_v$ $R^2\uparrow$, 5-seed mean): each robot is probed by an encoder trained on the \emph{other three} and never exposed to it. The zero-shot latent trails raw ViT on motor for every non-degenerate robot; franka is force-blind and degenerate for both (raw collapses to $-6.71$).}
+  \label{tab:loro}
+  \begin{tabular}{lcccc}
+    \toprule
+    held-out robot & LORO $z_v$ motor & raw motor & LORO $z_v$ ee & raw ee \\
+    \midrule
+    flexiv & $0.143$ & $0.232$ & $0.131$ & $0.211$ \\
+    ur5    & $0.295$ & $0.321$ & $0.161$ & $0.103$ \\
+    kuka   & $0.259$ & $0.391$ & $0.269$ & $0.353$ \\
+    franka & $-0.459$ & $-6.709$ & --- & --- \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
 Two scope caveats remain. The encoder uses a single camera; multi-view and wrist cameras are excluded for v0.1, and adding them as cross-view prediction rather than equality is future work. On the data side, RH20T's shipped streams are camera-aligned rather than native-rate, so the multi-rate claim is exercised against the raw high-frequency logs rather than the released 10~Hz tick data; cfg5's force is a robot-internal estimate rather than a physical sensor reading; and several positioning references are recent preprints.
 
 
