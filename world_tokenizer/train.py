@@ -113,8 +113,17 @@ def main():
     ap.add_argument("--steps-per-epoch", type=int, default=0, help="WDS: 0=auto from count.txt")
     ap.add_argument("--max-steps", type=int, default=0, help="hard cap on total steps (smoke)")
     ap.add_argument("--log-every", type=int, default=50)
+    ap.add_argument("--seed", type=int, default=None,
+                    help="random seed (torch/numpy/random); default None = unseeded")
     ap.add_argument("--out", default="/mnt/nas/data/RH20T/checkpoints/phase1_vision/vision_all.pt")
     args = ap.parse_args()
+
+    if args.seed is not None:
+        import random
+        import numpy as np
+        random.seed(args.seed)
+        np.random.seed(args.seed)
+        torch.manual_seed(args.seed)
 
     is_dist, rank, world, local_rank = _dist_init()
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
