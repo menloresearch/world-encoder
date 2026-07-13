@@ -80,7 +80,7 @@ Our contributions are:
   \item \textbf{A robot-first multimodal encoder.} We treat video, proprioception,
         and force/torque as first-class tokens, fuse them with a learned-query cross-attention layer, and train by masked cross-modal latent prediction under LeJEPA/SIGReg, with a robot-agnostic state representation that keeps every joint via masking rather than truncation (\S\ref{sec:method}).
   \item \textbf{The vision-only latent carries body-state the camera cannot see.}
-        It beats raw frozen-ViT features on held-out robot state; two controls---a compute-matched vision-only encoder and a PCA-256 compression control---isolate the gain as cross-modal learning rather than in-domain training or dimensionality reduction, with force the clearest (and honestly bounded) signal (\S\ref{sec:phase1}, \S\ref{sec:ablations}).
+        It beats raw frozen-ViT features on held-out robot state; two controls---a compute-matched vision-only encoder and a PCA 256 compression of the pretrained ViT features---isolate the gain as cross-modal learning rather than in-domain training or dimensionality reduction, with force the clearest (and honestly bounded) signal (\S\ref{sec:phase1}, \S\ref{sec:ablations}).
   \item \textbf{One embodiment-agnostic encoder across four robots.} A single
         encoder matches per-robot specialists on their own robot and transfers where specialists do not; a data-budget-matched control shows this reflects embodiment diversity rather than data volume (\S\ref{sec:phase1}, \S\ref{sec:ablations}).
   \item \textbf{The frozen latent is directly useful downstream.} Its cross-modal
@@ -136,8 +136,6 @@ Which images the camera produces is determined by joint configuration, gripper a
 
 \subsection{Token representation}
 \label{sec:tokenization}
-Two commitments shape the choices in this section. First, \textbf{encoder-first}, meaning the learned representation is the primary deliverable, and because downstream models consume the latent, the latent must retain the information those models require, including force and contact. Second, \textbf{predict, do not equate}, so fusion is learned by cross-modal \emph{prediction} rather than by forcing modalities into agreement. Prediction respects the information asymmetry between sensors and confers robustness to missing sensors without additional machinery.
-
 Every sensor reading is embedded as a token that carries its tokenized value, a learned modality embedding, a spatial position, and a continuous-time embedding of its timestamp (constant in the single-timestep model of this report; \S\ref{sec:temporal}).
 
 \begin{itemize}
@@ -216,8 +214,6 @@ Training combines a cross-modal predictive signal with two anti-collapse regular
         to each modality's embeddings before fusion. It prevents per-modality collapse and acts as a magnitude standardizer, making modalities commensurate before they are fused, a standardization that naive concatenation of separately-trained encoders omits. As with the prediction term, the ee penalty is applied only when a batch holds enough force-sensored samples, so vision and motor are always regularized while ee is regularized conditionally.
   \item \textbf{Joint SIGReg.} The same penalty applied to the fused latent $z$,
         with the aim of keeping it high-rank and expressive rather than collapsed. At the current scale its empirical effect is small (\S\ref{sec:ablations}); we retain it as insurance against collapse at wider bottlenecks and larger data, where anti-collapse pressure on $z$ matters more.
-  \item \textbf{Action-conditioned forward prediction (future work).} Same-time
-        cross-modal alignment is only correlational. Predicting future latents from actions is the causal component that would justify the term ``world model.'' It is not used in this report (\S\ref{sec:discussion}).
 \end{enumerate}
 
 The EMA target encoder is a slow copy of the online encoder, the momentum-target mechanism that stabilizes predictive SSL~\citep{data2vec2022}; SIGReg is the \texttt{SlicedEppsPulley} objective from LeJEPA~\citep{lejepa2025}, which replaces the usual anti-collapse heuristics (stop-gradient, predictor asymmetry, teacher momentum) with an explicit distributional constraint, and collapse is instead monitored directly with RankMe~\citep{rankme2023}. Only the fusion head and the per-modality projections train; the vision backbone stays frozen.
@@ -294,112 +290,84 @@ One user repeating a task yields $\sim$10 near-duplicate scenes, so we hold out 
 
 \section{Experiments}
 \label{sec:experiments}
-Our experiments are organized around a single hypothesis. Let the \emph{vision-sufficiency} null assert that a vision-only representation---or a low-dimensional compression of it---already captures the robot's physical state, so that fusing proprioception and force during training yields no additional information recoverable from vision at test time. Force is what makes the hypothesis non-trivial: it leaves essentially no trace in a single frame ($R^2\approx0$; \S\ref{sec:stage1}). We reject the null in two parts. The latent is first shown to be a \emph{good} representation (\S\ref{sec:phase1}): it recovers held-out robot state that a vision-only model does not, across four embodiments, with two controls---a compute-matched vision-only encoder and a PCA-256 compression control (\S\ref{sec:ablations})---ruling out in-domain training and mere compression, and with the claim scoped honestly, since vision already sees joint pose and a single timestep bounds the recoverable force. It is then shown to be a \emph{useful} one (\S\ref{sec:downstream}): its own prediction error is a training-free safety monitor, and it supports state read-out and image reconstruction from the frozen encoder.
+Our experiments test a single hypothesis. The \emph{vision-sufficiency} null asserts that a vision-only representation, or a low-dimensional compression of one, already captures the robot's physical state, so that fusing proprioception and force during training adds nothing recoverable from vision at test time. Force makes the null non-trivial because it leaves essentially no trace in a single frame ($R^2\approx0$; \S\ref{sec:stage1}). We reject it in three steps. Section~\ref{sec:setup} presents the headline comparison, scoring the encoder against four vision-only baselines with every result averaged across embodiments. Section~\ref{sec:ablations} breaks the comparison out by embodiment and isolates each ingredient of the result, covering the cross-embodiment transfer matrix, a compute-matched vision-only control, the separation of force from pose, and a data-budget-matched control. Section~\ref{sec:downstream} then shows that the frozen encoder is directly useful downstream with no retraining.
 
-\subsection{Setup and evaluation protocol}
+\subsection{Training results}
 \label{sec:setup}
-Our evaluation follows a standing rule: no single metric is reliable in isolation. Every evaluation therefore pairs a label-free health check with an unsaturated, robot-relevant probe, always group-held-out and multi-seed.
+Unless noted otherwise, every result in this section concerns \textbf{Kepler-Encoder-v0.1}, a single encoder trained on all seven RH20T configurations (\S\ref{sec:data}), abbreviated \textbf{KEv0.1} in tables. The instantiation sets $d=256$ and $M=8$ queries and trains for 40 epochs at batch 256 with AdamW (learning rate $10^{-3}$, weight decay $10^{-4}$), repeated over 5 seeds. Only the fusion head and the per-modality projections train ($\sim$2M parameters); the ViT backbone stays frozen. Evaluation uses the committed group-held-out splits (\S\ref{sec:data}), probes are fit on train rows and scored on held-out rows only, and error bars are $\pm$std over seeds. Per-robot specialist encoders, trained identically on single embodiments, appear in the ablation study (\S\ref{sec:ablations}).
 
-The label-free health check is RankMe, the effective rank $\exp(\text{entropy of normalized singular values})$ of the latent~\citep{rankme2023}, bounded by $[1,\text{dim}]$, and a collapsed latent that fakes a good probe is caught by RankMe. Because it scales with dimensionality, it is comparable only within the 256-d $z_v$ family, never against 768-d raw ViT features. The robot-relevant probe is a linear probe $R^2$. With the encoder frozen, we fit a ridge probe from a feature to a held-out robot target (motor state, or force/torque$+$pose), reading $R^2\uparrow$ as 1.0 perfect, 0 no better than the mean, and negative worse than the mean. Unless noted, the evaluated feature is the \textbf{vision-only} fused latent $z_v$ (state masked at eval), so no state leaks in and the probe measures what the encoder learned to read out of pixels.
+\subsubsection{Training loss}
+% TODO(jiaqi): the phase-1 logs record only the total loss per epoch, not the SIGReg
+% terms separately. If per-term curves exist (e.g. wandb), the SIGReg-degradation
+% comparison can be added here.
+The training loss sums the masked cross-modal prediction term and the SIGReg penalties (\S\ref{sec:objective}). Figure~\ref{fig:trainloss} shows its per-epoch mean for the five seeds of Kepler-Encoder-v0.1, logged every ten epochs. Optimization is stable and consistent across seeds, with most of the decrease arriving in the first ten epochs ($\approx$4.3 to $\approx$3.1) and a slow drift to 2.7--2.9 thereafter. The exception is instructive. Seed 3 tracks the pack through epoch 30 ($2.89$, mid-range) and destabilizes only in the final stretch, ending at $12.57$. The spike does mark real damage of one kind, since that seed's RankMe drops from the $\approx$185 band of the other seeds to $\approx$110, but its linear-probe accuracy is essentially unchanged (ur5 motor $R^2$ $0.334$, against $0.326$--$0.365$ for the healthy seeds). The three signals disagree because they measure different things. The loss reflects the joint state of the encoder and its predictor heads, RankMe the spectrum of the latent, and the probe the state recoverable from it; the loss is the least informative of the three about the deliverable, which is why we evaluate with the encoder-only metrics defined next.
 
-We compare against two baselines. \emph{Raw vision} is mean-pooled frozen ViT features (768-d), the bar fusion must beat. \emph{PCA-256} is the top-256 principal directions of the frozen features, fit on \emph{train rows only}, a pure compression control, so beating it isolates the gain as cross-modal learning rather than dimensionality reduction. All evaluation uses group-held-out splits over 5 seeds, with the encoder retrained per split for the single-embodiment study (Appendix~\ref{sec:stage2}) and probes refit per split for the matrix; error bars are $\pm$std over seeds.
+\begin{figure}[!htbp]
+  \centering
+  \includegraphics[width=0.72\linewidth]{training_loss.pdf}
+  \caption{Training loss of Kepler-Encoder-v0.1 (per-epoch mean of the total
+  objective, prediction $+$ SIGReg; logged every ten epochs; log scale). Four seeds descend from $\approx$4.3 and settle at 2.7--2.9. Seed 3 tracks them through epoch 30 and spikes to $12.57$ in the final stretch, yet its linear-probe accuracy is unchanged, illustrating why encoder quality is not read off this curve.}
+  \label{fig:trainloss}
+\end{figure}
 
-\subsection{A good representation: the embodiment-agnostic transfer matrix}
-\label{sec:phase1}
-Using the robot-agnostic chunk packet (\S\ref{sec:data}), we scale from a single-embodiment proof-of-concept (Appendix~\ref{sec:stage2}) to all seven configs and four embodiments and ask the headline question. Does one encoder trained on every robot match per-robot specialists, and does cross-modal fusion still beat raw vision at this scale? We train five encoders, each for 5 seeds and 40 epochs, namely four specialists (flexiv $=$ cfg1$+$2, ur5 $=$ cfg3$+$4, franka $=$ cfg5, kuka $=$ cfg6$+$7) and one \textbf{ALL} encoder on cfg1--7. Each encoder is probed on every embodiment's held-out groups, giving a $5\times4$ transfer matrix. The probed feature is always the vision-only latent $z_v$ (state masked at eval), and we score two target groups separately, \emph{motor} (joints and gripper) and \emph{end-effector} (force/torque and TCP pose).
+\subsubsection{Predictor-free performance metrics}
+Training relies on predictor heads that map the fused latent to each masked modality's target embedding, so the objective value measures the encoder and the predictors jointly. A collapsed latent paired with a predictor that has learned the collapse can score a near-perfect loss. We therefore evaluate the encoder with three measurements that involve no trained predictor.
+
+\paragraph{Latent health (RankMe).} RankMe is the effective rank of the latent, the exponential of the entropy of the normalized singular-value spectrum~\citep{rankme2023}, bounded by $[1,\dim]$. It is a label-free collapse detector, and it catches a collapsed latent that a probe alone can miss. Because it scales with dimensionality, we report it alongside each feature's width and compare it only within a width family.
+
+\paragraph{Robot-state recovery (linear probe).} With the encoder frozen, we ask how much of the robot's true state can be read off a feature by a single linear map. The probe is ridge regression, that is, least-squares linear regression with an $\ell_2$ weight penalty (features standardized, $\alpha=10$), which stabilizes the fit when feature dimensions are correlated, as they are here. The probe is deliberately the weakest read-out available. If a linear map recovers a state variable, the information is not only present in the feature but arranged so that it is directly accessible, so the credit belongs to the representation rather than to the decoder; a high-capacity decoder would blur that attribution, and \S\ref{sec:downstream} measures separately what a nonlinear read-out adds. We fit the probe on train rows and report $R^2\uparrow$ on held-out rows, where $1.0$ is perfect recovery, $0$ matches always predicting the mean, and negative values are worse than the mean. We score two target groups separately, \emph{motor} (joint angles and gripper) and \emph{end-effector} (force/torque and TCP pose). Unless noted, the probed feature is the \textbf{vision-only} fused latent $z_v$ with the state modalities masked at evaluation, so no robot state leaks into the probe input and the probe measures what the encoder learned to read out of pixels.
+
+\paragraph{Visual content (reconstruction).} To check that the latent also retains the scene, we decode the camera frame from the frozen latent with a latent-conditioned diffusion decoder and inspect the reconstructions (\S\ref{sec:qualitative}).
+
+\subsubsection{Baselines}
+\label{sec:baselines}
+We compare the vision-only latent $z_v$ against three vision-only features, all probed under the identical protocol.
+\begin{enumerate}
+  \item \emph{Pretrained ViT (PT-ViT)}. Mean-pooled patch tokens (768-d) of the frozen LeJEPA ViT-B/16 pretrained on ImageNet-1k~\citep{lejepa2025}, the same backbone that feeds our encoder and the bar that fusion must beat.
+  \item \emph{Pretrained ViT (PCA 256)}. The top 256 principal directions of the pretrained features, fit on train rows only. This is a pure compression control at the same width as $z_v$, so beating it rules out dimensionality reduction as the source of any gain.
+  \item \emph{Pretrained ViT $+$ finetuned linear head}. The frozen backbone with a trained $768\!\rightarrow\!256$ projection, trained on our training split with the vision-only LeJEPA objective. This controls for lightweight in-domain adaptation at the same output width as $z_v$.
+\end{enumerate}
+The strictest control is a second encoder of identical architecture and size, trained on the same data with the state streams permanently masked. In the notation of \eqref{eq:encoder} its exported feature is $z_v^{\mathrm{vo}} = f_{\theta_{\mathrm{vo}}}(x_v, \emptyset, \emptyset)$, where the parameters $\theta_{\mathrm{vo}}$ never observe $x_m$ or $x_e$ during training; $z_v$ has the same functional form but its parameters $\theta$ were trained with all modalities present. This \emph{vision-only control} appears in the main table and is analyzed per embodiment in the ablation study (\S\ref{sec:ablations}). One further baseline, a full finetune of the backbone, lowers every probe and changes no conclusion; it is described and reported in Appendix~\ref{sec:vitbase}.
+
+\subsubsection{Quantitative results}
+\label{sec:mainresults}
+Table~\ref{tab:main} reports the 256-d features. The two 768-d baselines (pretrained ViT and finetuned ViT) are tabulated in Appendix~\ref{sec:vitbase} (Table~\ref{tab:vitbase}) under the identical protocol and are quoted below where relevant. Each cell averages over the three embodiments that carry both target groups (flexiv, ur5, kuka). Franka has no force/torque sensor and is degenerate for every feature (motor $R^2$ from $-0.14$ to $-12.3$), so it is reported in the per-embodiment break-out (Table~\ref{tab:phase1diag}) rather than folded into an average it would dominate.
 
 \begin{table}[!htbp]
   \centering
-  \scriptsize
-  \setlength{\tabcolsep}{4pt}
-  \caption{Own-robot probe accuracy ($R^2\uparrow$, vision-only $z_v$, 5-seed
-  mean $\pm$std): each encoder scored on its \emph{own} robot's held-out groups (the diagonal of the transfer matrix). Two feature baselines are fit on train rows only, namely \emph{raw} (768-d mean-pooled frozen ViT) and \emph{PCA-256} (top-256 principal directions of those features, a compression control). At this scale PCA-256 tracks raw closely, so the binding comparison is $z_v$ vs.\ raw. Both baselines are encoder- and seed-independent, hence one fixed number each. Franka (cfg5) has no F/T sensor, so it has no end-effector target.}
-  \label{tab:phase1diag}
-  \begin{tabular}{lcccccccc}
+  \small
+  \caption{256-d features, averaged over the flexiv, ur5, and kuka held-out
+  groups (franka is broken out in Table~\ref{tab:phase1diag}; the 768-d ViT baselines are in Table~\ref{tab:vitbase}). Linear probes read held-out robot state from each frozen feature. Kepler-Encoder-v0.1 and the control report 5-seed mean $\pm$std; the linear head is a single run and PCA 256 is deterministic given the split. All four features are 256-d, so the RankMe values are directly comparable.}
+  \label{tab:main}
+  \begin{tabular}{lcccc}
     \toprule
-    & \multicolumn{4}{c}{motor (joints $+$ gripper)} & \multicolumn{4}{c}{end-effector (F/T $+$ pose)} \\
-    \cmidrule(lr){2-5}\cmidrule(lr){6-9}
-    robot & ALL $z_v$ & spec $z_v$ & raw & PCA-256 & ALL $z_v$ & spec $z_v$ & raw & PCA-256 \\
+    & & & \multicolumn{2}{c}{linear probe $R^2\uparrow$} \\
+    \cmidrule(lr){4-5}
+    feature & dim & RankMe & motor & end-effector \\
     \midrule
-    flexiv & 0.252 $\pm$0.021 & 0.270 $\pm$0.023 & 0.232 & 0.220 & 0.268 $\pm$0.031 & 0.286 $\pm$0.035 & 0.211 & 0.205 \\
-    ur5    & 0.339 $\pm$0.014 & 0.324 $\pm$0.021 & 0.321 & 0.321 & 0.187 $\pm$0.009 & 0.156 $\pm$0.016 & 0.103 & 0.144 \\
-    kuka   & 0.321 $\pm$0.022 & 0.330 $\pm$0.019 & 0.391 & 0.384 & 0.393 $\pm$0.035 & 0.432 $\pm$0.055 & 0.353 & 0.353 \\
-    franka & $-$0.377 $\pm$0.049 & $-$0.479 $\pm$0.074 & $-$6.709 & --- & --- & --- & --- & --- \\
+    \textbf{Kepler-Encoder-v0.1 ($z_v$)}       & 256 & 169.7 $\pm$34.1 & 0.304 $\pm$0.019 & \textbf{0.282 $\pm$0.026} \\
+    vision-only control ($z_v^{\mathrm{vo}}$)  & 256 & 189.9 $\pm$2.5  & 0.198 $\pm$0.003 & 0.142 $\pm$0.003 \\
+    pretrained ViT (PCA 256)                   & 256 & 153.3 & \textbf{0.308} & 0.234 \\
+    pretrained ViT $+$ finetuned linear head   & 256 & 53.0  & 0.279 & 0.206 \\
     \bottomrule
   \end{tabular}
 \end{table}
 
-\begin{table}[!htbp]
-  \centering
-  \caption{Full transfer matrix: every encoder (rows) probed on every robot's
-  held-out groups (columns), vision-only $z_v$ $R^2\uparrow$, 5-seed mean. \textbf{Bold} $=$ diagonal (own robot). \emph{Left}: motor. \emph{Right}: end-effector (franka has no ee). \textbf{ALL} is at or near the best cell in every column; specialists fall apart off-diagonal.}
-  \label{tab:phase1matrix}
-  \begin{minipage}{0.60\textwidth}
-    \centering
-    \small
-    \begin{tabular}{lcccc}
-      \toprule
-      train $\downarrow$ / eval $\rightarrow$ & flexiv & ur5 & kuka & franka \\
-      \midrule
-      flexiv spec & \textbf{0.270} & 0.254 & 0.234 & $-$0.393 \\
-      ur5 spec    & 0.148 & \textbf{0.324} & 0.236 & $-$0.411 \\
-      kuka spec   & 0.121 & 0.221 & \textbf{0.330} & $-$0.431 \\
-      franka spec & 0.069 & 0.088 & 0.148 & \textbf{$-$0.479} \\
-      \textbf{ALL} & 0.252 & 0.339 & 0.321 & $-$0.377 \\
-      raw          & 0.232 & 0.321 & 0.391 & $-$6.709 \\
-      \bottomrule
-    \end{tabular}
-    \\[2pt]{\footnotesize motor (joints $+$ gripper)}
-  \end{minipage}%
-  \begin{minipage}{0.40\textwidth}
-    \centering
-    \small
-    \begin{tabular}{lccc}
-      \toprule
-      & flexiv & ur5 & kuka \\
-      \midrule
-      flexiv spec & \textbf{0.286} & 0.137 & 0.247 \\
-      ur5 spec    & 0.135 & \textbf{0.156} & 0.247 \\
-      kuka spec   & 0.106 & 0.119 & \textbf{0.432} \\
-      franka spec & 0.059 & 0.029 & 0.102 \\
-      \textbf{ALL} & 0.268 & 0.187 & 0.393 \\
-      raw          & 0.211 & 0.103 & 0.353 \\
-      \bottomrule
-    \end{tabular}
-    \\[2pt]{\footnotesize end-effector (F/T $+$ pose)}
-  \end{minipage}
-\end{table}
+We draw three conclusions.
 
-\begin{table}[!htbp]
-  \centering
-  \caption{Latent health (RankMe of $z_v$, 5-seed mean $\pm$std): $\exp$ of the
-  entropy of the normalized singular-value spectrum~\citep{rankme2023}, a label-free collapse detector measured on each robot's held-out $z_v$. RankMe has no learned baseline; it is bounded by $[1,\dim]$, with the ceiling ($256$, the latent width) meaning a perfectly uniform spectrum and the floor ($1$) full collapse. The observed band ($\sim$165--180, about $0.65$--$0.70$ of ceiling) indicates no collapse. Because RankMe scales with dimensionality, these values are comparable only within the 256-d $z_v$ family, never against the 768-d raw features. The ALL column is one encoder scored on four test sets, so its spread across robots reflects the test set, not four models.}
-  \label{tab:phase1rankme}
-  \begin{tabular}{lcc}
-    \toprule
-    robot & ALL $z_v$ & spec $z_v$ \\
-    \midrule
-    flexiv & 171.1 $\pm$32.6 & 161.5 $\pm$48.1 \\
-    ur5    & 171.9 $\pm$31.4 & 177.1 $\pm$2.8 \\
-    kuka   & 166.1 $\pm$27.8 & 142.4 $\pm$7.3 \\
-    franka & 174.0 $\pm$30.9 & 146.6 $\pm$2.6 \\
-    \bottomrule
-  \end{tabular}
-\end{table}
+First, training with state raises what the encoder reads out of pixels. The fused $z_v$ and the vision-only control share architecture, data, and compute, and the fused latent probes higher on both target groups ($+0.106$ motor, $+0.140$ end-effector). The difference between the two runs is only whether state was present during training, so that is what the gap measures.
 
-\paragraph{Fusion wins where the camera is blind.} On the end-effector probe the ALL latent beats raw vision on every sensored robot ($+0.06$/$+0.08$/$+0.04$; Table~\ref{tab:phase1diag}). This aggregate is pose-dominated, but decomposing it (\S\ref{sec:ablations}) isolates a real, force-specific effect: raw vision reads force at $R^2\approx0$, whereas the fused latent sits significantly above both raw and a compute-matched vision-only control (force-only $R^2$ $0.05$/$\!\approx\!0$/$0.19$, modest but consistent). On motor the gain is only partial---the ALL latent beats raw except on kuka, where joint pose is already visible to the camera---so we expect the motor payoff with the temporal extension (\S\ref{sec:temporal}).
+Second, the gain is specific to end-effector state, and within it, to force. On motor, the fused latent is within $0.01$ of the strongest 256-d feature (PCA 256, $0.304$ vs.\ $0.308$) and slightly below the 768-d PT-ViT ($0.315$; Table~\ref{tab:vitbase}); joint pose is largely visible to the camera, so vision-derived features already recover it. On end-effector, the fused latent is above every baseline in Table~\ref{tab:main} ($0.282$ vs.\ $0.234$ for the next best) and above PT-ViT on each sensored robot individually (Table~\ref{tab:phase1diag}). Isolating the force dimensions (Table~\ref{tab:forceonly}, \S\ref{sec:ablations}), every vision-only feature reads force at or near zero (PT-ViT $-0.005$/$-0.115$/$0.103$ on flexiv/ur5/kuka), and the fused latent is above PT-ViT and the control on all three sensored robots (paired $t$, $p\le0.012$). Absolute force recovery is nonetheless modest ($0.05$/$-0.00$/$0.19$), consistent with a single timestep bounding what is recoverable (\S\ref{sec:temporal}).
 
-\paragraph{One encoder covers four robots.} The ALL encoder matches per-robot specialists on their own robot and dominates off-diagonal, where specialists collapse (the franka specialist to $0.07$--$0.15$, even the strong kuka specialist to $0.11$--$0.22$; Table~\ref{tab:phase1matrix}). Two controls locate the gain: PCA-256 stays within $0.01$--$0.04$ of raw (so it is not compression), and a data-budget-matched ALL still beats every specialist off its training robot (\S\ref{sec:ablations}), so the coverage reflects embodiment diversity, not data volume.
+Third, in-domain adaptation of the backbone does not substitute for state, and rank does not predict probe accuracy. The finetuned linear head probes below PCA 256 on both targets while compressing to RankMe 53, the full finetune lowers both probes further (Table~\ref{tab:vitbase}), and force $R^2\approx0$ for every finetuned checkpoint (Appendix~\ref{sec:stage1}). RankMe of $z_v$ sits near two thirds of the 256 ceiling, so the latent does not collapse; the vision-only control is higher-rank with weaker probes, so we report rank and probe accuracy together and read neither alone.
 
-\paragraph{The latent does not collapse.} RankMe of $z_v$ holds a healthy $\sim$165--180 band, about two-thirds of the $256$ ceiling (Table~\ref{tab:phase1rankme}); two low seeds pull the means down (a re-run item, not a recipe failure). Franka is the hardest embodiment---negative for every method---but fusion stabilizes it ($-0.38$ vs.\ raw's $-6.71$).
+The relative strength of PCA 256 has a simple reading. It is not a trained model but the variance-optimal linear compression of the PT-ViT features, so under a linear probe it inherits nearly all of their decodable content ($0.308$ vs.\ $0.315$ on motor). The two trained 256-d features are instead optimized for objectives other than preserving that content, and each pays for its objective in probe accuracy. The linear head is trained for multi-crop invariance under SIGReg, which concentrates its spectrum (RankMe 53) and loses linearly decodable detail on both targets. Kepler-Encoder-v0.1 is trained for cross-modal prediction, which reshapes the code toward state-predictive structure and away from pixel-level appearance detail. On motor, where joint pose is visible in the frame and appearance detail is exactly what the probe uses, this costs $0.004$ against PCA 256 (within one seed standard deviation); on end-effector, where the pixels lack the information and preservation cannot supply it, the same trade puts the fused latent $0.048$ above. A feature that merely preserves the backbone is therefore the strongest 256-d baseline wherever the backbone already suffices, and fusion pays where it does not.
 
-\subsection{A useful representation: downstream capabilities of the frozen encoder}
-\label{sec:downstream}
-Beyond probes, we ask what the \emph{frozen} encoder is directly useful for, with no retraining. These results show the latent supports concrete downstream use; the fusion claim itself rests on the transfer matrix and the ablations that follow, not on the demonstrations here.
+In sum, fusing state into training yields a moderate but consistent improvement in state recovery from pixels, and the improvement is concentrated where the camera carries the least information.
 
-\paragraph{Invalid-state / safety detector.} Because the encoder is trained by cross-modal prediction, its per-sample prediction error is a built-in \emph{surprise} signal, low when the robot state is consistent with vision and high when it is not. On ur5 held-out, valid vs.\ corrupted state separates at AUROC $0.90$ (out-of-range state) and $0.69$ (state swapped from another scene), with no additional training, giving a robot-safety anomaly detector on the encoder we already have.
-
-\paragraph{State read-out.} A small MLP decoding the frozen vision-only $z_v$ back to motor state reaches $R^2\,0.44$ vs.\ a linear probe's $0.335$ ($+0.11$), so the latent carries more state than a linear read-out exposes (per-dim joint angle $0.69$). Gripper width is near-discrete, so as \emph{classification} $z_v$ gives $78\%$ accuracy / $0.87$ AUROC (raw ViT $77\%/0.86$). The latent also organizes by continuous world-state, and within ur5 a PCA of $z_v$ traces a clean open$\rightarrow$closed gripper gradient (Figure~\ref{fig:pcagripper}), evidence it encodes graded state rather than only robot identity.
+\subsubsection{Qualitative results}
+\label{sec:qualitative}
+The latent organizes by continuous world-state. Within ur5, a PCA of the vision-only $z_v$ traces a smooth open-to-closed gripper gradient (Figure~\ref{fig:pcagripper}), so the latent encodes graded state rather than only robot or scene identity.
 
 \begin{figure}[!htbp]
   \centering
@@ -408,19 +376,7 @@ Beyond probes, we ask what the \emph{frozen} encoder is directly useful for, wit
   \label{fig:pcagripper}
 \end{figure}
 
-\begin{figure}[!htbp]
-  \centering
-  \begin{minipage}{0.44\textwidth}
-    \centering\includegraphics[width=\linewidth]{surprise_hist.png}
-  \end{minipage}\hfill
-  \begin{minipage}{0.54\textwidth}
-    \centering\includegraphics[width=\linewidth]{state_decode.png}
-  \end{minipage}
-  \caption{Downstream on the frozen encoder. \emph{Left:} cross-modal prediction error (``surprise'') separates valid from corrupted robot state with no extra training. \emph{Right:} motor state decoded from the vision-only $z_v$ by a small MLP, predicted vs.\ actual on held-out UR5.}
-  \label{fig:downstream}
-\end{figure}
-
-\paragraph{Pixel and cross-modal decode.} A small latent-conditioned diffusion decoder (PixNerd~\citep{pixnerd2026}) regenerates the camera frame from the frozen vision-only $z_v$ (Figure~\ref{fig:decode}a). Reconstructions are recognizable (scene layout, surfaces, colors, rough arm/object placement) but blurry by design, since the 256-d latent keeps world-state and drops fine texture, and quality tracks scene complexity (clean on simple scenes, degrading on clutter). The mirror experiment decodes from a \emph{state-only} latent (vision hidden, motor$+$ee only) and recovers arm pose from proprioception but not the scene (Figure~\ref{fig:decode}b). These are qualitative demonstrations of what the latent retains, not evidence for fusion.
+A small latent-conditioned diffusion decoder (PixNerd~\citep{pixnerd2026}) regenerates the camera frame from the frozen vision-only $z_v$ (Figure~\ref{fig:decode}a). Reconstructions are recognizable in scene layout, surfaces, colors, and rough arm and object placement, but blurry by design, because the 256-d latent keeps world-state and drops fine texture; quality tracks scene complexity, clean on simple scenes and degrading on clutter. The mirror experiment decodes from a \emph{state-only} latent (vision hidden, motor and ee only) and recovers arm pose from proprioception but not the surrounding scene (Figure~\ref{fig:decode}b). These reconstructions illustrate what the latent retains; the fusion claim rests on the quantitative comparison above and the ablations below. Appendix~\ref{sec:interp} adds two further qualitative probes of the vision path, a patch-feature PCA and an attention-map comparison.
 
 \begin{figure}[!htbp]
   \centering
@@ -436,20 +392,109 @@ Beyond probes, we ask what the \emph{frozen} encoder is directly useful for, wit
   \label{fig:decode}
 \end{figure}
 
-\subsection{Ablations}
+\subsection{Ablation study}
 \label{sec:ablations}
-Three claims-protection studies, all 5-seed on the ALL encoder unless noted.
+The main table averages over embodiments and pools force with pose. This section breaks both aggregations apart and isolates each ingredient of the result. All studies use 5 seeds unless noted.
 
-\paragraph{Cross-modal gain (the key control).} An identically-sized 256-d cross-attention encoder trained \emph{vision-only} (same head, data, and compute; no state token) isolates cross-modal fusion from the alternative that we merely trained an in-domain encoder. On each robot's own held-out groups, fusion adds substantially, most of all on force/EE:
+\subsubsection{Cross-embodiment transfer}
+\label{sec:phase1}
+Using the robot-agnostic chunk packet (\S\ref{sec:data}), we first ask whether the per-embodiment picture supports the averaged one, and whether one encoder trained on every robot matches per-robot specialists. Alongside Kepler-Encoder-v0.1 we train four specialists (flexiv $=$ cfg1$+$2, ur5 $=$ cfg3$+$4, franka $=$ cfg5, kuka $=$ cfg6$+$7), each for 5 seeds and 40 epochs, and probe every encoder on every embodiment's held-out groups. This yields a $5\times4$ transfer matrix; the probed feature is always the vision-only latent $z_v$ (state masked at eval), scored on the same two target groups as before. A single-embodiment proof-of-concept that preceded this study appears in Appendix~\ref{sec:stage2}. Table~\ref{tab:phase1diag} breaks the encoder against the two feature baselines out by embodiment, and Table~\ref{tab:phase1matrix} gives the specialists' full transfer matrix.
+
+\begin{table}[!htbp]
+  \centering
+  \small
+  \caption{Kepler-Encoder-v0.1 against the two feature baselines on each
+  embodiment's held-out groups (vision-only $z_v$, 5-seed mean $\pm$std). \emph{PT-ViT} (the pretrained ViT, 768-d mean-pooled frozen features) and \emph{PCA 256} (the top-256 principal directions of the PT-ViT features, a compression control) are fit on train rows only and deterministic given the split, hence one number each. The per-robot specialists appear in Table~\ref{tab:phase1matrix}. Franka (cfg5) has no F/T sensor, so it has no end-effector target.}
+  \label{tab:phase1diag}
+  \begin{tabular}{lcccccc}
+    \toprule
+    & \multicolumn{6}{c}{linear probe $R^2\uparrow$} \\
+    \cmidrule(lr){2-7}
+    & \multicolumn{3}{c}{motor (joints $+$ gripper)} & \multicolumn{3}{c}{end-effector (F/T $+$ pose)} \\
+    \cmidrule(lr){2-4}\cmidrule(lr){5-7}
+    robot & KEv0.1 $z_v$ & PT-ViT & PCA 256 & KEv0.1 $z_v$ & PT-ViT & PCA 256 \\
+    \midrule
+    flexiv & 0.252 $\pm$0.021 & 0.232 & 0.220 & 0.268 $\pm$0.031 & 0.211 & 0.205 \\
+    ur5    & 0.339 $\pm$0.014 & 0.321 & 0.321 & 0.187 $\pm$0.009 & 0.103 & 0.144 \\
+    kuka   & 0.321 $\pm$0.022 & 0.391 & 0.384 & 0.393 $\pm$0.035 & 0.353 & 0.353 \\
+    franka & $-$0.377 $\pm$0.049 & $-$6.709 & $-$0.750 & --- & --- & --- \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{table}[!htbp]
+  \centering
+  \caption{Specialist transfer matrix: each per-robot specialist (rows) probed on
+  every robot's held-out groups (columns), vision-only $z_v$ $R^2\uparrow$, 5-seed mean. \textbf{Bold} $=$ diagonal (own robot). \emph{Left}: motor. \emph{Right}: end-effector (franka has no ee). Specialists fall apart off-diagonal; compare the per-embodiment KEv0.1 values in Table~\ref{tab:phase1diag}.}
+  \label{tab:phase1matrix}
+  \begin{minipage}{0.60\textwidth}
+    \centering
+    \small
+    \begin{tabular}{lcccc}
+      \toprule
+      train $\downarrow$ / eval $\rightarrow$ & flexiv & ur5 & kuka & franka \\
+      \midrule
+      flexiv spec & \textbf{0.270} & 0.254 & 0.234 & $-$0.393 \\
+      ur5 spec    & 0.148 & \textbf{0.324} & 0.236 & $-$0.411 \\
+      kuka spec   & 0.121 & 0.221 & \textbf{0.330} & $-$0.431 \\
+      franka spec & 0.069 & 0.088 & 0.148 & \textbf{$-$0.479} \\
+      \bottomrule
+    \end{tabular}
+    \\[2pt]{\footnotesize motor (joints $+$ gripper)}
+  \end{minipage}%
+  \begin{minipage}{0.40\textwidth}
+    \centering
+    \small
+    \begin{tabular}{lccc}
+      \toprule
+      & flexiv & ur5 & kuka \\
+      \midrule
+      flexiv spec & \textbf{0.286} & 0.137 & 0.247 \\
+      ur5 spec    & 0.135 & \textbf{0.156} & 0.247 \\
+      kuka spec   & 0.106 & 0.119 & \textbf{0.432} \\
+      franka spec & 0.059 & 0.029 & 0.102 \\
+      \bottomrule
+    \end{tabular}
+    \\[2pt]{\footnotesize end-effector (F/T $+$ pose)}
+  \end{minipage}
+\end{table}
+
+\begin{table}[!htbp]
+  \centering
+  \caption{Latent health (RankMe of $z_v$, 5-seed mean $\pm$std): $\exp$ of the
+  entropy of the normalized singular-value spectrum~\citep{rankme2023}, a label-free collapse detector measured on each robot's held-out $z_v$. RankMe has no learned baseline; it is bounded by $[1,\dim]$, with the ceiling ($256$, the latent width) meaning a perfectly uniform spectrum and the floor ($1$) full collapse. The observed band ($\sim$165--180, about $0.65$--$0.70$ of ceiling) indicates no collapse. Because RankMe scales with dimensionality, these values are comparable only within the 256-d $z_v$ family, never against the 768-d PT-ViT features. The KEv0.1 column is one encoder scored on four test sets, so its spread across robots reflects the test set, not four models.}
+  \label{tab:phase1rankme}
+  \begin{tabular}{lcc}
+    \toprule
+    robot & KEv0.1 $z_v$ & spec $z_v$ \\
+    \midrule
+    flexiv & 171.1 $\pm$32.6 & 161.5 $\pm$48.1 \\
+    ur5    & 171.9 $\pm$31.4 & 177.1 $\pm$2.8 \\
+    kuka   & 166.1 $\pm$27.8 & 142.4 $\pm$7.3 \\
+    franka & 174.0 $\pm$30.9 & 146.6 $\pm$2.6 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{The per-embodiment picture matches the average.} On the end-effector probe the Kepler-Encoder-v0.1 latent beats PT-ViT on every sensored robot ($+0.06$/$+0.08$/$+0.04$; Table~\ref{tab:phase1diag}). On motor the gain is partial. The latent beats PT-ViT on flexiv and ur5 but not on kuka, where joint pose is already visible to the camera, so we expect the motor payoff to come with the temporal extension (\S\ref{sec:temporal}). Franka is the hardest embodiment, negative for every feature, but fusion stabilizes it ($-0.38$ against PT-ViT's $-6.71$).
+
+\paragraph{One encoder covers four robots.} Kepler-Encoder-v0.1 matches per-robot specialists on their own robot (Table~\ref{tab:phase1diag} against the diagonal of Table~\ref{tab:phase1matrix}) and stays strong on every robot, while specialists fall apart off-diagonal (the franka specialist to $0.07$--$0.15$, even the strong kuka specialist to $0.11$--$0.22$; Table~\ref{tab:phase1matrix}). Two controls locate the gain. The pretrained ViT (PCA 256) stays within $0.01$--$0.04$ of PT-ViT, so the coverage is not a compression effect, and the data-budget-matched encoder below still beats every specialist off its training robot, so the coverage reflects embodiment diversity rather than data volume.
+
+\paragraph{Per-embodiment latent health.} RankMe of $z_v$ holds a healthy $\sim$165--180 band on every test embodiment, about two thirds of the $256$ ceiling (Table~\ref{tab:phase1rankme}). Isolated low-rank seeds, including the loss-spike seed of \S\ref{sec:setup}, pull some means down without moving the probes, a re-run item rather than a recipe failure.
+
+\subsubsection{Cross-modal gain under matched compute}
+The vision-only control $z_v^{\mathrm{vo}}$ of Table~\ref{tab:main} is an identically-sized 256-d cross-attention encoder trained with the state streams permanently masked (same head, data, and compute; \S\ref{sec:baselines}), which isolates cross-modal fusion from the alternative that we merely trained an in-domain encoder. Table~\ref{tab:crossmodal} breaks the comparison out on each robot's own held-out groups.
 
 \begin{table}[h]
   \centering
   \small
+  \caption{Cross-modal gain per embodiment ($R^2\uparrow$, 5-seed mean): the fused latent $z_v$ against the compute-matched vision-only control $z_v^{\mathrm{vo}}$.}
+  \label{tab:crossmodal}
   \begin{tabular}{lcccc}
     \toprule
     & \multicolumn{2}{c}{motor $R^2$} & \multicolumn{2}{c}{end-effector $R^2$} \\
     \cmidrule(lr){2-3}\cmidrule(lr){4-5}
-    robot & fused $z_v$ & vision-only & fused $z_v$ & vision-only \\
+    robot & $z_v$ & $z_v^{\mathrm{vo}}$ & $z_v$ & $z_v^{\mathrm{vo}}$ \\
     \midrule
     flexiv & 0.252 & 0.137 & 0.268 & 0.122 \\
     ur5    & 0.339 & 0.198 & 0.187 & 0.085 \\
@@ -459,7 +504,7 @@ Three claims-protection studies, all 5-seed on the ALL encoder unless noted.
   \end{tabular}
 \end{table}
 
-\noindent Fusion adds $+0.06$--$0.14$ (motor) and $+0.10$--$0.17$ (force/EE) on the three data-rich robots. Because architecture and compute are identical, the gain is cross-modal learning rather than in-domain training; together with the PCA-256 control, this rules out dimensionality reduction as well. (Franka is inconclusive, a small force-blind config where both are near-degenerate.)
+\noindent Fusion adds $+0.06$--$0.14$ (motor) and $+0.10$--$0.17$ (force/EE) on the three data-rich robots. Because architecture and compute are identical, the gain is cross-modal learning rather than in-domain training; together with the pretrained ViT (PCA 256) control, this rules out dimensionality reduction as well. Franka is inconclusive, a small force-blind config where both variants are near-degenerate.
 
 \begin{figure}[!htbp]
   \centering
@@ -468,16 +513,17 @@ Three claims-protection studies, all 5-seed on the ALL encoder unless noted.
   \label{fig:crossmodal}
 \end{figure}
 
-\paragraph{Force isolated from TCP pose.} The end-effector probe mixes force/torque with TCP pose, so we split it (ALL encoder, 5-seed), probing force ($[0{:}6]$) and pose ($[6{:}15]$) separately. Pose-only $R^2$ is high ($0.41$/$0.31$/$0.53$ on flexiv/ur5/kuka) and dominates the aggregate, while force-only $R^2$ is modest ($0.05$/$-0.00$/$0.19$). The signal is nonetheless real and cross-modal: raw vision reads force at $R^2\approx0$ or negative everywhere, whereas the fused latent is above it, and above a compute-matched vision-only control, on all three robots, both gaps significant under a 5-seed paired $t$-test (Table~\ref{tab:forceonly}; $p\le0.012$). Partialling pose out of the force target leaves a near-zero residual for the fused latent ($+0.01$/$-0.03$/$+0.01$) and a negative one for raw, i.e.\ the force recoverable at a single timestep is largely the component entangled with joint configuration and contact geometry; the pose-independent part is out of reach without time, motivating the temporal extension (\S\ref{sec:temporal}).
+\subsubsection{Force isolated from TCP pose}
+The end-effector probe mixes force/torque with TCP pose, so we split it (Kepler-Encoder-v0.1, 5-seed), probing force ($[0{:}6]$) and pose ($[6{:}15]$) separately. Pose-only $R^2$ is high ($0.41$/$0.31$/$0.53$ on flexiv/ur5/kuka) and dominates the aggregate, while force-only $R^2$ is modest ($0.05$/$-0.00$/$0.19$). The signal is nonetheless real and cross-modal. PT-ViT reads force at or near zero everywhere, whereas the fused latent is above it, and above the vision-only control $z_v^{\mathrm{vo}}$, on all three robots, with both gaps significant under a 5-seed paired $t$-test (Table~\ref{tab:forceonly}; $p\le0.012$). Partialling pose out of the force target leaves a near-zero residual for the fused latent ($+0.01$/$-0.03$/$+0.01$) and a negative one for PT-ViT, so the force recoverable at a single timestep is largely the component entangled with joint configuration and contact geometry; the pose-independent part is out of reach without time, motivating the temporal extension (\S\ref{sec:temporal}).
 
 \begin{table}[!htbp]
   \centering
   \small
-  \caption{Force isolated from pose (vision-only $z_v$ $R^2\uparrow$, ALL encoder, 5-seed mean$\pm$std). Force $=$ F/T dims $[0{:}6]$. The fused latent beats raw ViT and a compute-matched vision-only (VO) control on every sensored robot (paired $t$, $p\le0.012$), though absolute force $R^2$ is modest; pose-only and the pose-partialled residual (force$\perp$pose) are shown for context.}
+  \caption{Force isolated from pose (vision-only $z_v$ $R^2\uparrow$, Kepler-Encoder-v0.1, 5-seed mean$\pm$std). Force $=$ F/T dims $[0{:}6]$. The fused latent beats PT-ViT and the compute-matched vision-only control $z_v^{\mathrm{vo}}$ on every sensored robot (paired $t$, $p\le0.012$), though absolute force $R^2$ is modest; pose-only and the pose-partialled residual (force$\perp$pose) are shown for context.}
   \label{tab:forceonly}
   \begin{tabular}{lccccc}
     \toprule
-    robot & fused force & VO force & raw force & fused pose & fused force$\perp$pose \\
+    robot & $z_v$ force & $z_v^{\mathrm{vo}}$ force & PT-ViT force & $z_v$ pose & $z_v$ force$\perp$pose \\
     \midrule
     flexiv & $0.049\pm0.009$ & $0.010$ & $-0.005$ & $0.413$ & $+0.008$ \\
     ur5    & $-0.001\pm0.008$ & $-0.019$ & $-0.115$ & $0.311$ & $-0.025$ \\
@@ -486,16 +532,17 @@ Three claims-protection studies, all 5-seed on the ALL encoder unless noted.
   \end{tabular}
 \end{table}
 
-\paragraph{Data-budget-matched ALL.} To separate embodiment diversity from data volume, we retrain ALL on a random $32{,}870$-frame subset (the mean specialist's training size; same $40$ epochs, hence a matched gradient-step budget), 5 seeds. Matched to a single specialist's budget, ALL falls $0.02$--$0.05$ below each specialist on that specialist's own robot (Table~\ref{tab:matched}), so full-ALL's on-diagonal parity partly reflects its $4\times$ larger training set. The embodiment-agnostic result, however, is not a volume artifact: at the same total budget the shared encoder covers all four robots (motor $R^2$ $0.22$/$0.30$/$0.31$ on flexiv/ur5/kuka) and beats every specialist evaluated \emph{off} its training robot ($0.07$--$0.25$; Table~\ref{tab:phase1matrix}). Distributing a fixed data budget across embodiments buys broad competence that concentrating it on one does not.
+\subsubsection{Data-budget-matched Kepler-Encoder-v0.1}
+To separate embodiment diversity from data volume, we retrain Kepler-Encoder-v0.1 on a random $32{,}870$-frame subset (the mean specialist's training size; same $40$ epochs, hence a matched gradient-step budget), 5 seeds. Matched to a single specialist's budget, the encoder falls $0.02$--$0.05$ below each specialist on that specialist's own robot (Table~\ref{tab:matched}), so the full model's on-diagonal parity partly reflects its $4\times$ larger training set. The embodiment-agnostic result, however, is not a volume artifact. At the same total budget the shared encoder covers all four robots (motor $R^2$ $0.22$/$0.30$/$0.31$ on flexiv/ur5/kuka) and beats every specialist evaluated \emph{off} its training robot ($0.07$--$0.25$; Table~\ref{tab:phase1matrix}). Distributing a fixed data budget across embodiments buys broad competence that concentrating it on one does not.
 
 \begin{table}[!htbp]
   \centering
   \small
-  \caption{Data-budget-matched ALL (vision-only $z_v$ motor $R^2\uparrow$, 5-seed mean). ``matched-ALL'' is trained on $32{,}870$ frames, the mean specialist's budget. It trails the specialist on-diagonal by $0.02$--$0.05$ but, unlike any specialist, stays strong across all robots.}
+  \caption{Data-budget-matched Kepler-Encoder-v0.1 (vision-only $z_v$ motor $R^2\uparrow$, 5-seed mean). ``matched KEv0.1'' is trained on $32{,}870$ frames, the mean specialist's budget. It trails the specialist on-diagonal by $0.02$--$0.05$ but, unlike any specialist, stays strong across all robots.}
   \label{tab:matched}
   \begin{tabular}{lcccc}
     \toprule
-    robot & matched-ALL & full-ALL & specialist & raw \\
+    robot & matched KEv0.1 & full KEv0.1 & specialist & PT-ViT \\
     \midrule
     flexiv & $0.215$ & $0.252$ & $0.270$ & $0.232$ \\
     ur5    & $0.295$ & $0.339$ & $0.324$ & $0.321$ \\
@@ -505,22 +552,42 @@ Three claims-protection studies, all 5-seed on the ALL encoder unless noted.
   \end{tabular}
 \end{table}
 
+\subsection{Downstream capabilities of the frozen encoder}
+\label{sec:downstream}
+Beyond probes, we ask what the \emph{frozen} encoder is directly useful for, with no retraining. These results show the latent supports concrete downstream use; the fusion claim itself rests on the quantitative comparison and the ablation study above, not on the demonstrations here.
+
+\paragraph{Invalid-state and safety detection.} Because the encoder is trained by cross-modal prediction, its per-sample prediction error is a built-in \emph{surprise} signal, low when the robot state is consistent with vision and high when it is not. On ur5 held-out, valid vs.\ corrupted state separates at AUROC $0.90$ (out-of-range state) and $0.69$ (state swapped from another scene), with no additional training, giving a robot-safety anomaly detector on the encoder we already have.
+
+\paragraph{State read-out.} The linear probe of \S\ref{sec:setup} lower-bounds what the latent contains, because it can only read information that is linearly arranged. To measure the headroom above that bound, we train a small MLP to decode motor state from the frozen vision-only $z_v$ on held-out ur5. The MLP reaches $R^2$ $0.44$ against the linear probe's $0.335$ ($+0.11$), so the 256-d latent stores more motor state than a linear read-out exposes, with individual joint angles decoding at $0.69$ per dimension (Figure~\ref{fig:downstream}, right). Gripper aperture behaves differently. Its distribution is near-discrete, mostly fully open or fully closed, so we score it as classification; $z_v$ gives $78\%$ accuracy and $0.87$ AUROC against $77\%$ and $0.86$ for PT-ViT, a near-tie consistent with gripper state being visible in pixels. The matching MLP on PT-ViT features has not been run, so the nonlinear headroom is a statement about what $z_v$ contains, not evidence that fusion added it.
+
+\begin{figure}[!htbp]
+  \centering
+  \begin{minipage}{0.44\textwidth}
+    \centering\includegraphics[width=\linewidth]{surprise_hist.png}
+  \end{minipage}\hfill
+  \begin{minipage}{0.54\textwidth}
+    \centering\includegraphics[width=\linewidth]{state_decode.png}
+  \end{minipage}
+  \caption{Downstream on the frozen encoder. \emph{Left:} cross-modal prediction error (``surprise'') separates valid from corrupted robot state with no extra training. \emph{Right:} motor state decoded from the vision-only $z_v$ by a small MLP, predicted vs.\ actual on held-out UR5.}
+  \label{fig:downstream}
+\end{figure}
+
 \section{Discussion and Limitations}
 \label{sec:discussion}
 \paragraph{Single-timestep.} Every result here fuses modalities at a single tick, so the encoder captures structure \emph{across modalities} but not \emph{across time}. True time-derivatives (velocity, acceleration) and contact dynamics are out of reach, which also bounds the modest force recovery; the native-rate temporal extension (\S\ref{sec:temporal}) is where we expect the motor and force payoff.
 
 \paragraph{Correlational, not causal.} Same-time alignment shows the latent \emph{contains} cross-modal structure, not that it models dynamics; action-conditioned forward prediction, the causal step, is future work (\S\ref{sec:temporal}). The evaluation is also probe-centric and aligned with the training target---informative but favorable---though the two controls of \S\ref{sec:ablations} rule out in-domain training and compression.
 
-\paragraph{No zero-shot transfer to unseen robots.} Embodiment-agnosticism holds for robots \emph{in the training mix} (\S\ref{sec:phase1}), not for unseen ones: in a leave-one-robot-out test the zero-shot latent trails raw ViT on the held-out robot's motor probe by $0.03$--$0.13$ (Table~\ref{tab:loro}), as the fused vision path tunes to the training embodiments' visual domains. It is, however, far more stable than raw on the degenerate franka config and beats raw on the ur5 force probe. Few-shot adaptation and a broader embodiment set are future work.
+\paragraph{No zero-shot transfer to unseen robots.} Embodiment-agnosticism holds for robots \emph{in the training mix} (\S\ref{sec:phase1}), not for unseen ones: in a leave-one-robot-out test the zero-shot latent trails PT-ViT on the held-out robot's motor probe by $0.03$--$0.13$ (Table~\ref{tab:loro}), as the fused vision path tunes to the training embodiments' visual domains. It is, however, far more stable than PT-ViT on the degenerate franka config and beats it on the ur5 force probe. Few-shot adaptation and a broader embodiment set are future work.
 
 \begin{table}[!htbp]
   \centering
   \small
-  \caption{Zero-shot leave-one-robot-out (vision-only $z_v$ $R^2\uparrow$, 5-seed mean): each robot is probed by an encoder trained on the \emph{other three} and never exposed to it. The zero-shot latent trails raw ViT on motor for every non-degenerate robot; franka is force-blind and degenerate for both (raw collapses to $-6.71$).}
+  \caption{Zero-shot leave-one-robot-out (vision-only $z_v$ $R^2\uparrow$, 5-seed mean): each robot is probed by an encoder trained on the \emph{other three} and never exposed to it. The zero-shot latent trails PT-ViT on motor for every non-degenerate robot; franka is force-blind and degenerate for both (PT-ViT collapses to $-6.71$).}
   \label{tab:loro}
   \begin{tabular}{lcccc}
     \toprule
-    held-out robot & LORO $z_v$ motor & raw motor & LORO $z_v$ ee & raw ee \\
+    held-out robot & LORO $z_v$ motor & PT-ViT motor & LORO $z_v$ ee & PT-ViT ee \\
     \midrule
     flexiv & $0.143$ & $0.232$ & $0.131$ & $0.211$ \\
     ur5    & $0.295$ & $0.321$ & $0.161$ & $0.103$ \\
@@ -555,6 +622,37 @@ Kepler-Encoder-v0.1 fuses video, proprioception, and force/torque into a single 
 \section{Preliminary: freezing the vision backbone}
 \label{sec:stage1}
 Before the main study, one preliminary fixes a design choice: whether to finetune the vision backbone on robot video. It does not help. Continuing LeJEPA on cfg3 video is a no-op. A hot learning rate (2e-4) collapses the encoder (RankMe $300\!\rightarrow\!158$); a gentle rate (2e-5) restores health (RankMe $\sim$285) but leaves robot-relevant probes flat (contact $0.69\!\rightarrow\!0.67$), and force $R^2\approx0$ for every checkpoint. The apparent drop in a task-id probe ($0.91\!\rightarrow\!0.74$) is a \emph{saturated} metric tracking ImageNet appearance, not a real regression, the first instance of the single-metric trap. The lasting finding motivates the whole model: \textbf{a single frame does not contain force}, so vision alone cannot encode it. Hence the backbone is frozen (warm-started from the pretrained checkpoint) and force must enter through a different modality.
+
+\clearpage
+
+\section{Frozen and finetuned ViT baselines}
+\label{sec:vitbase}
+Table~\ref{tab:vitbase} reports the two 768-d ViT baselines, evaluated under the protocol of \S\ref{sec:mainresults} (same splits, targets, and ridge probes; averages over the flexiv, ur5, and kuka held-out groups). \emph{PT-ViT} is the frozen pretrained backbone of \S\ref{sec:baselines}. The \emph{finetuned ViT} is a full finetune of that backbone on our training split with the vision-only LeJEPA objective, at the highest learning rate that does not collapse the encoder ($2\times10^{-5}$; Appendix~\ref{sec:stage1}), evaluated as a single run. The pretrained features set the strongest motor baseline ($0.315$). The full finetune lowers both probes relative to the frozen backbone; together with the head-only finetune and the PCA 256 compression of Table~\ref{tab:main}, in-domain adaptation of the backbone does not improve state recovery, in line with the freezing decision of Appendix~\ref{sec:stage1}.
+% TODO(jiaqi): a "finetuned ViT (PCA 256)" row is deliberately left out. The PCA control
+% exists to width-match the STRONGEST vision feature (the pretrained ViT, which sets the
+% bar); the finetuned ViT is already the weakest feature at full 768-d width, and PCA is
+% at best information-preserving for a linear probe (it moved the pretrained features by
+% only ~0.01), so its compressed version cannot overturn any conclusion. The 256-d
+% in-domain-adaptation slot is already covered by the ViT + finetuned linear head.
+% Runnable via a small extension of run_vision_eval if a reviewer asks (~1-2 GPU-hours).
+
+\begin{table}[!htbp]
+  \centering
+  \small
+  \caption{The 768-d ViT baselines, averaged over the flexiv, ur5, and kuka
+  held-out groups. The pretrained ViT is deterministic given the split; the finetuned ViT is a single run. RankMe scales with dimensionality and is comparable only within a width family, so these values are not comparable to the 256-d family of Table~\ref{tab:main}.}
+  \label{tab:vitbase}
+  \begin{tabular}{lcccc}
+    \toprule
+    & & & \multicolumn{2}{c}{linear probe $R^2\uparrow$} \\
+    \cmidrule(lr){4-5}
+    feature & dim & RankMe & motor & end-effector \\
+    \midrule
+    pretrained ViT (PT-ViT)   & 768 & 380.7 & 0.315 & 0.222 \\
+    finetuned ViT             & 768 & 252.0 & 0.233 & 0.158 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
 
 \clearpage
 
@@ -598,6 +696,7 @@ Table~\ref{tab:notation} lists every symbol used in the Method (\S\ref{sec:metho
     $z$ & fused latent from the full context \\
     $z^{(\backslash k)}$ & fused latent with modality $k$ held out \\
     $z_v$ & vision-only latent (motor and ee hidden), the exported embedding \\
+    $z_v^{\mathrm{vo}}$ & latent of the vision-only-\emph{trained} control encoder $f_{\theta_{\mathrm{vo}}}$ (\S\ref{sec:baselines}) \\
     $f_\theta,\,\bar f_{\bar\theta}$ & online encoder and its EMA target copy \\
     $h_k$ & per-modality predictor head for modality $k$ \\
     $\operatorname{sg}[\cdot]$ & stop-gradient operator \\
@@ -624,16 +723,16 @@ Before scaling to the full transfer matrix (\S\ref{sec:phase1}), we fuse video $
     feature $\rightarrow$ predict robot state & cfg3 POC & cfg3$+$cfg4 \\
     \midrule
     \textbf{Fused $z_v$ (256-d, cross-modal, state masked)} & \textbf{0.551 $\pm$0.018} & \textbf{0.653 $\pm$0.008} \\
-    raw vision (768-d, mean-pooled)                             & 0.257 $\pm$0.075          & 0.516 $\pm$0.010 \\
-    PCA-256 of frozen vision (compression control)             & 0.134 $\pm$0.047          & 0.418 $\pm$0.015 \\
+    PT-ViT, raw vision (768-d, mean-pooled)                     & 0.257 $\pm$0.075          & 0.516 $\pm$0.010 \\
+    pretrained ViT (PCA 256, compression control)              & 0.134 $\pm$0.047          & 0.418 $\pm$0.015 \\
     \bottomrule
   \end{tabular}
 \end{table}
 
-$z_v$ beats raw vision by $+0.294\pm0.078$ (POC) / $+0.137\pm0.007$ (scale) and the PCA control by $+0.417\pm0.050$ / $+0.235\pm0.010$, positive on every seed. Two facts make this meaningful. First, \textbf{beating the PCA control shows the gain is cross-modal, not compression}, because a latent $3\times$ smaller than raw vision predicts the robot \emph{better}, while PCA-256, the same compression with no cross-modal training, loses. Second, \textbf{only vision enters at eval}, so the encoder has \emph{learned to read robot-relevant structure out of pixels} by having been trained alongside state. This is exactly what a late-fusion recipe (train each modality's encoder separately, then concatenate) cannot produce, because its vision features were never shaped by force or joints.
+$z_v$ beats raw vision by $+0.294\pm0.078$ (POC) / $+0.137\pm0.007$ (scale) and the PCA control by $+0.417\pm0.050$ / $+0.235\pm0.010$, positive on every seed. Two facts make this meaningful. First, \textbf{beating the PCA control shows the gain is cross-modal, not compression}, because a latent $3\times$ smaller than raw vision predicts the robot \emph{better}, while PCA 256, the same compression with no cross-modal training, loses. Second, \textbf{only vision enters at eval}, so the encoder has \emph{learned to read robot-relevant structure out of pixels} by having been trained alongside state. This is exactly what a late-fusion recipe (train each modality's encoder separately, then concatenate) cannot produce, because its vision features were never shaped by force or joints.
 
 \paragraph{Why every baseline rises from cfg3 to cfg3$+$cfg4.}
-The margin over raw narrows in absolute terms ($+0.294\!\rightarrow\!+0.137$) but stays decisive over the compression control ($+0.417\!\rightarrow\!+0.235$). The baselines rise largely for reasons that are \emph{not} ``raw vision got better at decoding within-robot state.'' (i)~$R^2$'s denominator changed, since pooling two UR5 setups injects easy, pixel-readable \emph{between-config} variance (different mounts/backgrounds), which any encoder captures before decoding any pose. (ii)~The POC numbers are noisy/under-fit ($\pm0.075\!\rightarrow\!\pm0.010$, $7\times$ tighter). (iii)~PCA-256 improved the most ($+0.284$), diagnostic of the new between-config variance landing in its top components. (iv)~$z_v$ rose the least ($+0.102$), since it was already near saturation, which is why the margin over raw narrows while the margin over compression stays large. The comparison carrying the cross-modal claim is $z_v$ vs.\ the compression control, decisive in both runs.
+The margin over raw narrows in absolute terms ($+0.294\!\rightarrow\!+0.137$) but stays decisive over the compression control ($+0.417\!\rightarrow\!+0.235$). The baselines rise largely for reasons that are \emph{not} ``raw vision got better at decoding within-robot state.'' (i)~$R^2$'s denominator changed, since pooling two UR5 setups injects easy, pixel-readable \emph{between-config} variance (different mounts/backgrounds), which any encoder captures before decoding any pose. (ii)~The POC numbers are noisy/under-fit ($\pm0.075\!\rightarrow\!\pm0.010$, $7\times$ tighter). (iii)~PCA 256 improved the most ($+0.284$), diagnostic of the new between-config variance landing in its top components. (iv)~$z_v$ rose the least ($+0.102$), since it was already near saturation, which is why the margin over raw narrows while the margin over compression stays large. The comparison carrying the cross-modal claim is $z_v$ vs.\ the compression control, decisive in both runs.
 
 
 \clearpage
@@ -676,11 +775,11 @@ A few activations fall on regions where nothing is visibly happening. We read th
 
 \section{Secondary ablations}
 \label{sec:moreabl}
-Two further ablations on the ALL encoder (5-seed), included for completeness.
+Two further ablations on Kepler-Encoder-v0.1 (5-seed), included for completeness.
 
 \paragraph{Bottleneck size and joint-SIGReg.} On ur5 the latent width has a sweet spot, where $d{=}128$ gives $0.356/0.147$ (motor/ee), $d{=}256$ (the matrix setting) $0.324/0.156$, and $d{=}512$ degrades to $0.255/0.122$ with unstable RankMe (some seeds collapse), so $d{\in}[128,256]$ is preferred over a wider bottleneck. Removing the joint-SIGReg term ($0.357/0.173$ vs.\ $0.324/0.156$ with it) changes the probe little, consistent with the healthy RankMe band (\S\ref{sec:phase1}) showing $z$ does not collapse at this scale; as noted in \S\ref{sec:objective} we keep the term as insurance against collapse at wider bottlenecks, where the $d{=}512$ instability above shows the pressure begins to matter.
 
-\paragraph{Latent geometry (triplet accuracy).} On the ALL encoder (seed 0), a triplet probe (positive $=$ same scene / nearby tick) reads $0.930$ (cosine $0.946$) on the hard \emph{different-scene, same-robot} tier and $0.992$ ($0.997$) on \emph{different-robot}, above chance with positive margins, i.e.\ nearby world-states sit close and different scenes/robots far apart.
+\paragraph{Latent geometry (triplet accuracy).} On Kepler-Encoder-v0.1 (seed 0), a triplet probe (positive $=$ same scene / nearby tick) reads $0.930$ (cosine $0.946$) on the hard \emph{different-scene, same-robot} tier and $0.992$ ($0.997$) on \emph{different-robot}, above chance with positive margins, i.e.\ nearby world-states sit close and different scenes/robots far apart.
 
 \clearpage
 
