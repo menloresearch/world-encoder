@@ -1,5 +1,4 @@
-.claude
-.DS_Store
+*.claude
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -223,5 +222,3 @@ __marimo__/
 # Vendored helper repos (cloned separately; kept on the NAS, not part of this repo)
 /rh20t_api/
 /stable-pretraining/
-pca_viz_out/
-viz_out/
