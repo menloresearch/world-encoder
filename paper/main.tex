@@ -234,25 +234,6 @@ The EMA target encoder is a slow copy of the online encoder, the momentum-target
   \label{fig:loss}
 \end{figure}
 
-\begin{figure}[!htbp]
-  \centering
-  \includegraphics[width=0.9\linewidth]{fig_temporal.png}
-  \caption{The continuous-time, multi-rate extension. Streams arrive at different native rates (vision $\sim$10~Hz, proprioception and force $\sim$100~Hz), each sample carrying an mTAN continuous-time embedding of its real timestamp, so the Perceiver fuses them by real time with no resampling to a common clock and no zero-padding. The single-timestep model of this paper is the one-tick special case.}
-  \label{fig:temporal}
-\end{figure}
-
-\subsection{Continuous-time, multi-rate extension}
-\label{sec:temporal}
-The single-timestep model validates modality fusion; the central architectural hypothesis is fusing streams \emph{across time at their native rates}. The data side already supports it (tick-anchored native-rate windows with per-token timestamps, \S\ref{sec:data}); the remaining work is model-side.
-
-The continuous-time embedding encodes each token's timestamp. We embed each token's real timestamp with a Fourier / Time2Vec feature map~\citep{time2vec2019} using fixed, \emph{log-spaced} frequencies, upgradable to learned frequencies (mTAN proper~\citep{mtan2021}) behind the same interface. We deliberately take only mTAN's continuous-time \emph{embedding} and not the whole network, because the Perceiver already supplies mTAN's other half. The learned queries are the reference points and cross-attention is attention-to-observations, a point COPER makes architecturally explicit~\citep{coper2022}. The decisive knob is the frequency band, which must span $\sim$ms (100~Hz force) to seconds (multi-second episodes).
-
-Tokenization varies by stream density. Dense force/torque ($\sim$100--125~Hz) is tokenized by a 1-D CNN over time, which is locally near-regular within a chunk, with the validity mask carried as extra channels so that variable-DOF masking is preserved. Sparse streams such as vision and joints at $\sim$10~Hz remain native tokens with continuous-time embeddings. Context windows are selected by $\Delta t$ from cached timestamps, and masking spans (modality $\times$ time) to predict held-out-time or future ee latents. Causality is a property of the attention mask, causal for the prediction head and any streaming deployment, with causal-versus-bidirectional tested for the representation objective, rather than something baked into the tokenizer.
-
-\paragraph{SIGReg under time.} A caveat specific to this extension: SIGReg's Epps--Pulley statistic is a \emph{distributional} test over a pool of samples that pushes the \emph{marginal} embedding distribution toward isotropy, and applied to a time-pooled latent its isotropy constraint could wash out structured temporal variance. This does not threaten the design, because SIGReg is an anti-collapse \emph{regularizer}, not the learning signal: temporal structure is carried by the prediction objective (masking over modality~$\times$~time, future-latent prediction) and the recurrent carry-forward, not by the regularizer. To keep the statistic from pooling away time we apply SIGReg to the \emph{per-timestep} latent (each instant's marginal), never to a time-pooled one, and treat its placement and strength as an on/off ablation.
-
-A decisive ablation follows from this design. We compare continuous-time embedding with no resampling against resample-everything-then-1D-CNN, the classical DSP approach. This test validates or rejects the central claim, and we build both and adopt the simpler one if it wins.
-
 \subsection{Decoder (probe, not training signal)}
 \label{sec:decoder}
 A decoder is deliberately excluded from the training objective, because training on reconstruction would pull the latent back toward pixel memorization, the autoencoder failure mode this design is intended to avoid. The decoder instead serves as a generative probe. Whereas a linear probe reports that information \emph{exists} in the latent, a generative decoder makes explicit what the latent represents. A lightweight robot-state decoder on frozen latents quantifies content, and a subsequent diffusion-based pixel decoder samples plausible detail (decoding is one-to-many because the latent intentionally discards pixel nuisance) and serves as the reconstruction component of the compression story.
@@ -709,5 +690,26 @@ $z_v$ beats raw vision by $+0.294\pm0.078$ (POC) / $+0.137\pm0.007$ (scale) and 
 \paragraph{Why every baseline rises from cfg3 to cfg3$+$cfg4.}
 The margin over raw narrows in absolute terms ($+0.294\!\rightarrow\!+0.137$) but stays decisive over the compression control ($+0.417\!\rightarrow\!+0.235$). The baselines rise largely for reasons that are \emph{not} ``raw vision got better at decoding within-robot state.'' (i)~$R^2$'s denominator changed, since pooling two UR5 setups injects easy, pixel-readable \emph{between-config} variance (different mounts/backgrounds), which any encoder captures before decoding any pose. (ii)~The POC numbers are noisy/under-fit ($\pm0.075\!\rightarrow\!\pm0.010$, $7\times$ tighter). (iii)~PCA-256 improved the most ($+0.284$), diagnostic of the new between-config variance landing in its top components. (iv)~$z_v$ rose the least ($+0.102$), since it was already near saturation, which is why the margin over raw narrows while the margin over compression stays large. The comparison carrying the cross-modal claim is $z_v$ vs.\ the compression control, decisive in both runs.
 
+
+\clearpage
+
+\section{Continuous-time, multi-rate extension (planned)}
+\label{sec:temporal}
+The single-timestep model of this report validates modality fusion; the central architectural hypothesis, left to future work, is fusing streams \emph{across time at their native rates}. The data side already supports it (tick-anchored native-rate windows with per-token timestamps, \S\ref{sec:data}); the remaining work is model-side.
+
+The continuous-time embedding encodes each token's timestamp. We embed each token's real timestamp with a Fourier / Time2Vec feature map~\citep{time2vec2019} using fixed, \emph{log-spaced} frequencies, upgradable to learned frequencies (mTAN proper~\citep{mtan2021}) behind the same interface. We deliberately take only mTAN's continuous-time \emph{embedding} and not the whole network, because the Perceiver already supplies mTAN's other half. The learned queries are the reference points and cross-attention is attention-to-observations, a point COPER makes architecturally explicit~\citep{coper2022}. The decisive knob is the frequency band, which must span $\sim$ms (100~Hz force) to seconds (multi-second episodes).
+
+Tokenization varies by stream density. Dense force/torque ($\sim$100--125~Hz) is tokenized by a 1-D CNN over time, which is locally near-regular within a chunk, with the validity mask carried as extra channels so that variable-DOF masking is preserved. Sparse streams such as vision and joints at $\sim$10~Hz remain native tokens with continuous-time embeddings. Context windows are selected by $\Delta t$ from cached timestamps, and masking spans (modality $\times$ time) to predict held-out-time or future ee latents. Causality is a property of the attention mask, causal for the prediction head and any streaming deployment, with causal-versus-bidirectional tested for the representation objective, rather than something baked into the tokenizer.
+
+\paragraph{SIGReg under time.} A caveat specific to this extension: SIGReg's Epps--Pulley statistic is a \emph{distributional} test over a pool of samples that pushes the \emph{marginal} embedding distribution toward isotropy, and applied to a time-pooled latent its isotropy constraint could wash out structured temporal variance. This does not threaten the design, because SIGReg is an anti-collapse \emph{regularizer}, not the learning signal: temporal structure is carried by the prediction objective (masking over modality~$\times$~time, future-latent prediction) and the recurrent carry-forward, not by the regularizer. To keep the statistic from pooling away time we apply SIGReg to the \emph{per-timestep} latent (each instant's marginal), never to a time-pooled one, and treat its placement and strength as an on/off ablation.
+
+A decisive ablation follows from this design. We compare continuous-time embedding with no resampling against resample-everything-then-1D-CNN, the classical DSP approach. This test validates or rejects the central claim, and we build both and adopt the simpler one if it wins.
+
+\begin{figure}[!htbp]
+  \centering
+  \includegraphics[width=0.9\linewidth]{fig_temporal.png}
+  \caption{The continuous-time, multi-rate extension. Streams arrive at different native rates (vision $\sim$10~Hz, proprioception and force $\sim$100~Hz), each sample carrying an mTAN continuous-time embedding of its real timestamp, so the Perceiver fuses them by real time with no resampling to a common clock and no zero-padding. The single-timestep model of this paper is the one-tick special case.}
+  \label{fig:temporal}
+\end{figure}
 
 \end{document}
