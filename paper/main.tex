@@ -119,15 +119,12 @@ Auxiliary latent-prediction objectives improve VLA policies when the target enco
 
 \subsection{Problem formulation}
 \label{sec:problem}
-At time $t$ a robot emits a set of heterogeneous sensor streams, namely an RGB frame $x_v$, proprioceptive state $x_m$ (joint angles, velocities, gripper aperture), and end-effector signals $x_e$ (force/torque, TCP pose). These streams are partial views of one underlying body state. Which images the camera produces is determined by joint configuration, gripper aperture, and contact, and force leaves essentially no trace in a single frame ($R^2 \approx 0$; \S\ref{sec:stage1}). Crucially, this force is a \emph{directly sensed} instantaneous state variable, read from the wrist force/torque sensor at each tick rather than differentiated from motion, so a single frame is a well-posed target for it, exactly as for joint angle or gripper aperture; velocity and acceleration are the opposite case, genuine time-derivatives of position that a single frame cannot determine and that lie outside the single-timestep model of this report (\S\ref{sec:temporal}). The stream count, native sampling rates, and the sensor suite itself vary across embodiments, so no fixed state vector spans the corpus.
-
-We seek an encoder $f_\theta$ that fuses the available streams into a single latent and, at evaluation, recovers that latent from vision alone,
+At time $t$ a robot emits a set of heterogeneous sensor streams, namely an RGB frame $x_v$, proprioceptive state $x_m$ (joint angles, velocities, gripper aperture), and end-effector signals $x_e$ (force/torque, TCP pose). These streams are partial views of one underlying body state. We seek an encoder $f_\theta$ that fuses the available sensor streams into a single latent $z$ that contains a single unified representation of the state of the robot and its perceivevable environment,
 \begin{equation}
   \label{eq:encoder}
   z = f_\theta(x_v, x_m, x_e), \qquad
-  z_v = f_\theta(x_v, \emptyset, \emptyset),
 \end{equation}
-where $\emptyset$ marks a masked (absent) modality. Training carries no task labels; the signal is masked cross-modal prediction. Writing $z^{(\backslash k)}$ for the fused latent with modality $k$ held out, and $\bar f_{\bar\theta}$ for an exponential-moving-average target copy of the encoder, the learning objective is
+where $x_v$, $x_m$, $x_e$ are the vision, motor state and end effector state of a robotic arm. One of the properties of our desired latent is that the representation itself is cross-modal. We thus adapt the spatial masking strategy proposed by I-JEPA~\cite{ijepa2023} to the modality dimension. Writing $z^{(\backslash k)}$ for the fused latent with modality $k$ held out, and $\bar f_{\bar\theta}$ for an exponential-moving-average target copy of the encoder, the learning objective is
 \begin{equation}
   \label{eq:objective}
   \mathcal{L}_{\text{pred}}
@@ -135,6 +132,8 @@ where $\emptyset$ marks a masked (absent) modality. Training carries no task lab
     \big\lVert\, h_k\!\big(z^{(\backslash k)}\big) - \operatorname{sg}\!\big[\bar f_{\bar\theta}(x_k)\big] \,\big\rVert_2^2,
 \end{equation}
 with $\operatorname{sg}[\cdot]$ the stop-gradient and $h_k$ a per-modality predictor head that maps the fused latent back to modality $k$'s target embedding. The full training loss adds anti-collapse regularization to \eqref{eq:objective}, detailed in \S\ref{sec:objective}. The encoder must therefore (i) retain the force and proprioceptive structure the camera cannot reveal, (ii) keep $z_v$ informative of body state despite dropping $x_m, x_e$ at test time, and (iii) share one architecture across embodiments, tolerating absent sensors by masking.
+
+Which images the camera produces is determined by joint configuration, gripper aperture, and contact, and force leaves essentially no trace in a single frame ($R^2 \approx 0$; \S\ref{sec:stage1}). Crucially, this force is a \emph{directly sensed} instantaneous state variable, read from the wrist force/torque sensor at each tick rather than differentiated from motion, so a single frame is a well-posed target for it, exactly as for joint angle or gripper aperture; velocity and acceleration are the opposite case, genuine time-derivatives of position that a single frame cannot determine and that lie outside the single-timestep model of this report (\S\ref{sec:temporal}). The stream count, native sampling rates, and the sensor suite itself vary across embodiments, so no fixed state vector spans the corpus.
 
 \subsection{Token representation}
 \label{sec:tokenization}
