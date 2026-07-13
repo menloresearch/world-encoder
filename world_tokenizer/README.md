@@ -1,4 +1,32 @@
-# world_tokenizer — LeJEPA on RH20T cfg3 (stages 0-1)
+# world_tokenizer
+
+The encoder, training, and evaluation code.
+
+## Module map
+
+**Current single-timestep pipeline** (where the paper's results come from):
+- `train_chunks.py` — trains `MMPerceiverChunks` on the chunk caches (the transfer-matrix runs).
+- `mm_perceiver2.py` — the encoder (`MMPerceiver`): learned-query cross-attention fuser + LeJEPA/SIGReg.
+- `dataloader.py` — chunk-cache dataset + group-held-out split loader.
+- `model.py`, `state.py`, `chunk_state.py` — frozen ViT loader, state encodings, chunk-packet assembly.
+
+**Evaluation & probes** (frozen encoder):
+- `robust_robot_eval.py` — main R² probe (motor / end-effector), multi-seed, group-held-out.
+- `surprise.py` — cross-modal prediction-error / invalid-state detector.
+- `gripper_classify.py`, `state_decoder.py`, `contact_probe.py`, `probe_curve.py`, `eval_extras.py`,
+  `eval_lejepa.py`, `step1_gate.py` — additional probes/gates; `compile_results.py` aggregates.
+
+**Precompute, figures & viz:**
+- `precompute_patch.py` (ViT patch features), `precompute_decode.py` (PixNerd `(frame, z_v)` manifest).
+- `make_figures.py`, `pca_viz.py`, `attn_gif.py`, `visualize_stage2.py`, `viz_suite.py`.
+
+**Earlier video-only lineage (stages 0–1) & experimental** — kept for reference, not on the current path:
+- `train.py`, `train_perceiver.py`, `dataset.py`, `mm_perceiver.py` (v1) — the stage-0/1 video-only
+  trainer + loaders (still used by the vision-only control in `scripts/`).
+- `mm_perceiver3.py` — an experimental encoder variant.
+
+The current chunk pipeline is driven by the top-level `run_precompute.sh` → `run_matrix.sh` →
+`run_ablations.sh`. The setup/run notes below describe the earlier stage-0/1 video flow.
 
 ## Setup
 

@@ -40,7 +40,7 @@ def masked_mean(x, mask):
 
 class MMPerceiverChunks(nn.Module):
     def __init__(self, d=256, vis_dim=768, n_queries=8, lamb=0.02, ema=0.99,
-                 n_slices=512):
+                 n_slices=512, vision_only=False, joint_sigreg=True):
         super().__init__()
         self.proj_v = nn.Linear(vis_dim, d)             # vision patch: 768 -> d
         self.proj_m = nn.Linear(2 * MOTOR_CH, d)        # motor row: 3 masked vals + 3 mask bits -> d
@@ -58,6 +58,7 @@ class MMPerceiverChunks(nn.Module):
                 p.requires_grad = False
         self.sigreg = SlicedEppsPulley(num_slices=n_slices)
         self.lamb, self.ema, self.n_queries = lamb, ema, n_queries
+        self.vision_only, self.joint_sigreg = vision_only, joint_sigreg
 
     @torch.no_grad()
     def update_target(self):
@@ -95,7 +96,32 @@ class MMPerceiverChunks(nn.Module):
         blocked = torch.cat([bv, bm, be], dim=1)             # [B,217]
         return blocked.unsqueeze(1).expand(B, self.n_queries, T_CTX)
 
+    def _forward_vision_only(self, rgb):
+        """Control: in-domain vision SSL, NO state fusion. Mask half the patches, predict
+        their pooled EMA-target from the visible half; SIGReg. Isolates 'trained in-domain'
+        from 'cross-modal fusion' — z_v of this model vs the fused model = the fusion gain."""
+        B, N, dev = rgb.shape[0], N_PATCH, rgb.device
+        vt = self.proj_v(rgb) + self.mod[0]                    # [B,196,d]
+        order = torch.rand(B, N, device=dev).argsort(-1)
+        tgt_idx = order[:, N // 2:]                             # patches to predict
+        with torch.no_grad():
+            tv_all = self.tgt_v(rgb)                           # [B,196,d]
+            t = torch.gather(tv_all, 1, tgt_idx.unsqueeze(-1).expand(-1, -1, tv_all.shape[-1])).mean(1)
+        blocked = torch.zeros(B, N, dtype=torch.bool, device=dev)
+        blocked.scatter_(1, tgt_idx, True)                     # visible half attends; target half blocked
+        z = self.fuse(vt, blocked.unsqueeze(1).expand(B, self.n_queries, N))
+        inv = (self.pred["v"](z) - t).square().mean()
+        ev = self.proj_v(rgb).mean(1)
+        z_full = self.fuse(vt, torch.zeros(B, self.n_queries, N, dtype=torch.bool, device=dev))
+        sig = self.sigreg(ev) + (self.sigreg(z_full) if self.joint_sigreg else 0.0)
+        loss = inv + self.lamb * sig
+        return {"loss": loss, "inv": inv.detach(),
+                "sig": sig.detach() if torch.is_tensor(sig) else torch.tensor(0.0),
+                "z": z_full.detach()}
+
     def forward(self, rgb, motor, m_mask, ee, e_mask):
+        if self.vision_only:
+            return self._forward_vision_only(rgb)
         mfeat = self.motor_feats(motor, m_mask)
         ctx = self._context(rgb, mfeat, ee)
         m_row_valid = m_mask.any(-1)                         # [B,8]
@@ -118,7 +144,7 @@ class MMPerceiverChunks(nn.Module):
         ev = self.proj_v(rgb).mean(1)                        # online per-modal embs (grad)
         em = masked_mean(self.proj_m(mfeat), m_row_valid)
         z_full = self.fuse(ctx, self._attn_mask(m_row_valid, e_mask))
-        sig = self.sigreg(ev) + self.sigreg(em) + self.sigreg(z_full)
+        sig = self.sigreg(ev) + self.sigreg(em) + (self.sigreg(z_full) if self.joint_sigreg else 0.0)
         if int(e_any.sum()) >= 8:                            # enough samples for a stable term
             sig = sig + self.sigreg(masked_mean(self.proj_e(ee), e_mask)[e_any])
         loss = inv + self.lamb * sig
@@ -126,7 +152,31 @@ class MMPerceiverChunks(nn.Module):
                 "z": z_full.detach()}
 
     @torch.no_grad()
+    def surprise(self, rgb, motor, m_mask, ee, e_mask):
+        """Per-sample cross-modal surprise: how badly the state is predicted from vision (+the
+        other stream). High = the state is inconsistent with what vision expects → an
+        invalid/anomalous robot state. Returns [B]. Runs on the frozen encoder, no training."""
+        mfeat = self.motor_feats(motor, m_mask)
+        ctx = self._context(rgb, mfeat, ee)
+        m_row_valid, e_any = m_mask.any(-1), e_mask.any(-1)
+        tm = masked_mean(self.tgt_m(mfeat), m_row_valid)               # target motor latent
+        te = masked_mean(self.tgt_e(ee), e_mask)                       # target ee latent
+        z_no_m = self.fuse(ctx, self._attn_mask(m_row_valid, e_mask, hide=("m",)))
+        z_no_e = self.fuse(ctx, self._attn_mask(m_row_valid, e_mask, hide=("e",)))
+        s = (self.pred["m"](z_no_m) - tm).square().mean(-1)            # predict motor from vision(+ee)
+        s_e = (self.pred["e"](z_no_e) - te).square().mean(-1)
+        return s + torch.where(e_any, s_e, torch.zeros_like(s_e))      # [B]
+
+    @torch.no_grad()
     def embed_vision(self, rgb, motor, m_mask, ee, e_mask):
         """z_v: fused latent from VISION ONLY (motor + ee hidden) — the eval latent."""
         ctx = self._context(rgb, self.motor_feats(motor, m_mask), ee)
         return self.fuse(ctx, self._attn_mask(m_mask.any(-1), e_mask, hide=("m", "e")))
+
+    @torch.no_grad()
+    def embed_state(self, rgb, motor, m_mask, ee, e_mask):
+        """z_state: fused latent from STATE ONLY (vision hidden) — motor + ee only. Mirror of
+        embed_vision; same 256-d. For the cross-modal decode demo: reconstruct the camera
+        frame from proprioception + force alone (arm pose is recoverable, scene is not)."""
+        ctx = self._context(rgb, self.motor_feats(motor, m_mask), ee)
+        return self.fuse(ctx, self._attn_mask(m_mask.any(-1), e_mask, hide=("v",)))

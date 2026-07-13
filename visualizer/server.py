@@ -10,7 +10,6 @@ Stdlib only — no pip installs. Run:
     # data root resolves from --data-root, else $RH20T, else /mnt/nas/data/RH20T
 """
 import argparse
-import csv
 import json
 import math
 import os
@@ -42,29 +41,6 @@ def safe_parts(*parts):
     return all(SAFE_COMPONENT.match(p) and p not in (".", "..") for p in parts)
 
 
-def scene_group(scene_name):
-    """task_0001_user_0016_scene_0001_cfg_0003 -> task_0001_user_0016_cfg_0003.
-
-    Matches world_tokenizer.dataloader.scene_group so the split shown here is the
-    exact one the dataloader holds out (split is by (cfg, task, user) group)."""
-    return re.sub(r"_scene_\d+", "", scene_name)
-
-
-def load_split(split_csv):
-    """{group_name: "train"|"test"} from a holdout CSV (columns: group,cfg,split).
-
-    Returns {} if the path is unset or missing, so the split filter just disables."""
-    if not split_csv:
-        return {}
-    path = Path(split_csv)
-    if not path.is_file():
-        print(f"warning: split CSV {path} not found; the Train/Test filter will be "
-              f"disabled", file=sys.stderr)
-        return {}
-    with open(path, newline="") as f:
-        return {r["group"]: r["split"] for r in csv.DictReader(f)}
-
-
 # the 28-dim SceneState.state() vector, sliced into named signal groups
 STATE_GROUPS = [
     ("joints — sin", 0, ["j1", "j2", "j3", "j4", "j5", "j6"]),
@@ -86,8 +62,6 @@ class Handler(BaseHTTPRequestHandler):
     frames_root: Path = None
     metrics_dir: Path = None
     raw_root: Path = None
-    split_csv: str = None       # path shown in the UI (None if none loaded)
-    split_map: dict = {}        # {group: "train"|"test"}, empty if no split loaded
 
     def log_message(self, fmt, *args):  # quieter default log
         sys.stderr.write("%s %s\n" % (self.address_string(), fmt % args))
@@ -165,8 +139,6 @@ class Handler(BaseHTTPRequestHandler):
             "frames_root": str(self.frames_root),
             "metrics_dir": str(self.metrics_dir),
             "cfgs": cfgs,
-            "split_csv": self.split_csv,
-            "has_split": bool(self.split_map),
         }
 
     def _cfg_dir(self, cfg):
@@ -180,10 +152,7 @@ class Handler(BaseHTTPRequestHandler):
     def api_scenes(self, cfg):
         d = self._cfg_dir(cfg)
         scenes = sorted(s.name for s in d.iterdir() if s.is_dir())
-        # split label per scene, aligned to `scenes` ("" when the group is absent
-        # from the CSV or no split is loaded) so the UI can filter train/test
-        splits = [self.split_map.get(scene_group(s), "") for s in scenes]
-        return {"cfg": cfg, "scenes": scenes, "splits": splits}
+        return {"cfg": cfg, "scenes": scenes}
 
     def api_scene(self, cfg, name):
         if not safe_parts(name):
@@ -287,10 +256,6 @@ def main():
                     help="raw scene dirs with transformed/*.npy (default <data-root>/raw)")
     ap.add_argument("--metrics-dir", default=str(Path(__file__).resolve().parent / "metrics"),
                     help="directory of metrics *.json files")
-    ap.add_argument("--split-csv", default=str(REPO_ROOT / "splits" / "holdout_v1.csv"),
-                    help="train/test holdout CSV (columns group,cfg,split) powering the "
-                         "Train/Test scene filter; pass '' to disable "
-                         "(default splits/holdout_v1.csv)")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8000)
     args = ap.parse_args()
@@ -298,16 +263,13 @@ def main():
     Handler.frames_root = Path(args.frames_root or Path(args.data_root) / "frames")
     Handler.raw_root = Path(args.raw_root or Path(args.data_root) / "raw")
     Handler.metrics_dir = Path(args.metrics_dir)
-    Handler.split_map = load_split(args.split_csv)
-    Handler.split_csv = str(Path(args.split_csv)) if args.split_csv and Handler.split_map else None
     if not Handler.frames_root.is_dir():
         print(f"warning: frames root {Handler.frames_root} does not exist "
               f"(set $RH20T or --data-root); the Data tab will be empty", file=sys.stderr)
 
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
     print(f"visualizer: http://{args.host}:{args.port}  "
-          f"(frames: {Handler.frames_root}, metrics: {Handler.metrics_dir}"
-          f"{', split: ' + Handler.split_csv if Handler.split_csv else ''})")
+          f"(frames: {Handler.frames_root}, metrics: {Handler.metrics_dir})")
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

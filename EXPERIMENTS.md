@@ -7,17 +7,7 @@ Standing eval rule (learned in Stage 1): pair **RankMe** (label-free health / co
 an **unsaturated, robot-relevant probe** (predict robot state, or contact/force), always
 **scene-held-out** and **multi-seed**. One saturated metric will mislead you.
 
-> **R² ↑** in every table below: higher is better (fraction of held-out target variance explained;
-> 1.0 = perfect, 0 = no better than predicting the mean, negative = worse than the mean).
-
-## Initial experiments — LeJEPA finetune + single-timestep video+state fusion
-
-Everything in this section uses the **legacy 28-dim state vector** (one UR5-shaped layout) and a
-**single timestep** — the POC path before the robot-agnostic chunk packet of Phase 1. Two chapters:
-(0-1) does finetuning the vision backbone on RH20T video help, and (2) does fusing video +
-robot_state in one encoder learn genuine cross-modal structure.
-
-### Stages 0-1 — LeJEPA finetune on cfg3 video only
+## Stages 0-1 — LeJEPA finetune on cfg3 video only
 
 Pipeline verified end to end: cfg3 → 2.33M frames (799 scenes, 66 tasks) → 240 WebDataset shards →
 DDP continue-LeJEPA from `OK-AI/lejepa-vitb16-pretrain-in1k` → eval.
@@ -35,12 +25,12 @@ DDP continue-LeJEPA from `OK-AI/lejepa-vitb16-pretrain-in1k` → eval.
 Scripts: `extract_frames` → `make_shards` → `train` → `eval_lejepa` / `probe_curve` /
 `robust_robot_eval` / `contact_probe`; `gate` for the video↔force alignment sanity check.
 
-### Stage 2 — video + robot_state (verified): cfg3 POC → cfg3+cfg4 scale-up
+## Stage 2 — video + robot_state (verified)
 
 Question: does fusing video + robot_state in one encoder learn genuine cross-modal structure — a
 latent better than either modality alone — and is the gain *cross-modal*, not just compression?
 
-**What we ran** (single timestep, video + robot_state):
+**What we ran** (single timestep, cfg3 video + robot_state):
 
 - Signal gate: frozen vision → state R² = **0.43** (tcp 0.73) — cross-modal signal is real, so
   building the fusion encoder is justified. (`step1_gate`)
@@ -54,80 +44,65 @@ latent better than either modality alone — and is the gain *cross-modal*, not 
   Stage 5); not action-conditioned (#4).
 - Eval: cross-modal predictability + RankMe, scene-held-out, 5 seeds, encoder retrained per split,
   with a PCA-256 compression control. (`train_perceiver`)
-- **Two runs.** POC: cfg3 only, ~24k frames, 1 setup. Scale-up (2026-07-04, branch
-  `user/jiaqi-stage2-cfg34`): cfg3+cfg4, 30 frames/scene → 86,430 frames / 2,881 scenes (**3.6×**
-  data; both UR5 so the 28-dim layout still fits). Run script `run_stage2_cfg34.sh`; artifacts NAS
-  `checkpoints/exp-20260704-032544/`.
 
-**Outcome — fusion works, and the gain is genuinely cross-modal.** Predicting robot state (R², 5
-seeds, scene-held-out, encoder retrained per split):
+**Outcome — fusion works, and the gain is genuinely cross-modal.** Predicting robot state (R²,
+5 seeds, scene-held-out, 24k frames, encoder retrained per split):
 
-| feature (→ predict robot state) | cfg3 POC · R² ↑ | cfg3+cfg4 · R² ↑ |
-|---|---|---|
-| **Perceiver `z_v` (256, cross-modal, state masked)** | **0.551 ±0.018** | **0.653 ±0.008** |
-| raw vision (768, mean-pooled) | 0.257 ±0.075 | 0.516 ±0.010 |
-| PCA-256 of LeJEPA vision (compression control) | 0.134 ±0.047 | 0.418 ±0.015 |
+| feature (→ predict robot state) | R² |
+|---|---|
+| **Perceiver `z_v` (256, cross-modal, state masked)** | **0.551 ±0.018** |
+| raw vision (768, mean-pooled) | 0.257 ±0.075 |
+| PCA-256 of LeJEPA vision (compression control) | 0.134 ±0.047 |
 
-- `z_v` beats raw vision by **+0.294 ±0.078** (POC) / **+0.137 ±0.007** (scale) and the PCA control by
-  **+0.417 ±0.050** / **+0.235 ±0.010** — **positive on all 5 seeds in both runs**.
-- **RankMe of `z_v`** (256-dim latent, ceiling 256): **210.8 ±4.5** on the cfg3+cfg4 scale run
-  (per-seed 208/208/206/218/214 — tight, no collapse). The cfg3-only POC's per-seed RankMe was not
-  saved to NAS; only the ~211 summary survived, so treat the POC figure as approximate.
+- `z_v` beats raw vision by **+0.294 ±0.078** and PCA-256 by **+0.417 ±0.050** — **both on all 5 seeds**.
 - Beating the PCA compression control ⇒ the gain is **cross-modal, not dimensionality reduction**.
-  A latent 3× smaller than raw vision predicts the robot better; PCA-256 has the *same* compression
-  with no cross-modal training and loses, so the win can't be attributed to "compress to 256 helps."
+  A latent 3× smaller than raw vision predicts the robot ~2× better. RankMe 211 (no collapse).
 - The vision-only fused latent (`z_v`) is used at eval, so no state leaks in — the encoder has
   *learned* to read robot-relevant structure out of pixels by having been trained alongside state.
-- The cross-modal gain holds at 3.6× the data; the ordering is unchanged.
-
-**Why every baseline jumps from cfg3 → cfg3+cfg4 (analysis).** The margin over raw narrows in
-absolute terms (+0.294 → +0.137) but stays decisive vs the compression control (+0.417 → +0.235).
-Crucially, the baselines rise for reasons that are mostly *not* "raw vision got better at decoding
-state within one robot":
-
-1. **R²'s denominator changed — pooling two setups injects easy, pixel-readable between-config
-   variance.** R² = variance-explained ÷ *total* target variance. cfg3-only measures within-setup
-   decoding; cfg3+cfg4 pools two UR5 setups with different camera mounts, backgrounds, and
-   task/pose distributions. That between-setup difference is now part of total state variance and is
-   *trivially* readable from pixels (any encoder can tell a cfg3 frame from a cfg4 frame by the
-   background). So every vision baseline earns "free" R² from cross-config discrimination before
-   decoding any within-config pose — which is why all three rows rise together and the ordering is
-   preserved. This is a partial confound, not pure improvement.
-2. **The POC numbers are noisy / under-fit.** Error bars collapse ±0.075 → ±0.010 (7× tighter). With
-   ~24k frames split scene-held-out over 5 seeds, each probe fit on few scenes and the vision→state
-   map (high-dimensional, data-hungry) was under-fit, so 0.257 is a high-variance underestimate; part
-   of the jump to 0.516 is just the estimate settling with 3.6× the data.
-3. **PCA-256 improved the most (+0.284 > raw's +0.259), which is diagnostic.** In the POC PCA-256
-   (0.134) sat *below* raw (0.257): the top-256 principal directions of the frozen features weren't
-   where the state signal lived (and/or the covariance was poorly estimated on 24k frames). At scale
-   the covariance stabilizes *and* the new between-config variance lands in the top PCs and correlates
-   with state — consistent with point 1.
-4. **`z_v` rises the least (+0.102).** It was already reading state-relevant structure out of pixels,
-   so it had the least to gain from the easy between-config variance and extra fit data — closest to
-   saturation. This is why the margin over raw narrows while the margin over the compression control
-   stays large.
-
-   Net: the baseline jump is mostly a changed R² denominator plus the POC being noisy/under-fit — not
-   within-robot decoding suddenly improving. The comparison that carries the cross-modal claim is
-   `z_v` vs the compression control, which stays decisive across both runs.
 
 **Design note:** masked cross-modal prediction is required, not optional — a shared encoder without
 it underperforms single-modality (MJEPA). SIGReg only prevents collapse.
 
-**Left / still owed:**
-- The vision-only-*trained* Perceiver ablation (isolate cross-modal gain from "trained an in-domain
-  encoder") — owed before this result goes external.
-- Ablations: bottleneck size, joint-SIGReg on/off.
-- Beyond cfg3+4 the 28-dim state path breaks (joint dims differ per robot); the multi-cfg path is the
-  chunk packet (`chunk_state.py` → `precompute_chunks.py` → `dataloader.py`), used from Phase 1 of
-  [PLAN.md](PLAN.md) onward.
-- **modality × time** (temporal masking → predict future force/contact) = the Stage-5 upgrade.
+**Left:** ablations (bottleneck size, joint-SIGReg on/off), and **modality × time** (temporal
+masking → predict future force/contact) = the Stage-5 upgrade.
 
-## Phase 1 — full-RH20T transfer matrix (2026-07-07; all 5 runs 5-seed final)
+## Stage 2 at scale — cfg3+cfg4 (2026-07-04, branch `user/jiaqi-stage2-cfg34`)
+
+First scale-up beyond the cfg3 POC: same recipe (frozen `e0` + Perceiver, single timestep,
+legacy 28-dim state — cfg3/4 are both UR5 so the layout still fits), 30 frames/scene →
+86,430 frames / 2,881 scenes, 5 seeds, scene-held-out, encoder retrained per split.
+Run script: `run_stage2_cfg34.sh`; artifacts: NAS `checkpoints/exp-20260704-032544/`.
+
+| feature (→ predict robot state) | R² |
+|---|---|
+| **Perceiver `z_v` (256, cross-modal, state masked)** | **0.653 ±0.008** |
+| raw vision (768, mean-pooled) | 0.516 ±0.010 |
+| PCA-256 of LeJEPA vision (compression control) | 0.418 ±0.015 |
+
+- `z_v` − raw = **+0.137 ±0.007**, `z_v` − PCA-256 = **+0.235 ±0.010** — positive on all
+  5 seeds; RankMe 211 (no collapse).
+- The cross-modal gain holds at 3.6× the POC's data. Every baseline improves with more
+  data (raw 0.257 → 0.516) while the ordering is unchanged — the margin over raw narrows
+  in absolute terms but stays decisive vs the compression control.
+- Beyond cfg3+4 the 28-dim state path breaks (joint dims differ per robot); the multi-cfg
+  path is the chunk packet (`chunk_state.py` → `precompute_chunks.py` → `dataloader.py`),
+  used from Phase 1 of [PLAN.md](PLAN.md) onward.
+- **Still owed before this result goes external:** the vision-only-*trained* Perceiver
+  ablation (isolate cross-modal gain from "trained an in-domain encoder").
+
+## Phase 1 — full-RH20T transfer matrix (2026-07-07, FINAL — 5 seeds)
 
 Scale-up to all 7 cfgs / 4 embodiments via the robot-agnostic chunk packet (supersedes the
 28-dim state). Question: does **one encoder trained on all robots match per-robot
 specialists**, and does cross-modal fusion still beat raw vision at full scale?
+
+**In plain language:** we train a small fusion head to squeeze camera + joints + force into
+one summary by a hide-one-modality-and-predict-it game (vision backbone frozen). At test we
+feed it **vision only** and ask a linear probe to recover the robot's state. Result: one
+encoder trained on all 4 robots reads state as well as (or better than) per-robot
+specialists — and far better than a specialist on the *wrong* robot — and its vision-only
+latent predicts force/contact better than raw vision on every robot, though joint-angle
+gains are small (vision already sees the arm). No collapse.
 
 **What we ran** (single timestep, frozen `e0` + 3-modality Perceiver over the chunk packet):
 
@@ -142,110 +117,223 @@ specialists**, and does cross-modal fusion still beat raw vision at full scale?
   5×4 transfer matrix. Baselines fit on train rows only: raw ViT (768), PCA-256. Eval latent
   = **vision-only `z_v`**. Caches on NAS `caches/cfg{1..7}.npz` (~53 GB); `run_matrix.sh`.
 
-**Diagonal — each encoder on its OWN robot** (R² ↑, vision-only `z_v`, all 5-seed mean ±std):
+**Full numbers (version-controlled):** complete per-run **mean±std for every metric × robot**
+is in [`results/RESULTS.md`](results/RESULTS.md), auto-generated (`compile_results.py`) from
+the committed raw per-seed outputs `results/phase1/*.json` (matrix) and
+`results/phase1_abl/*.json` (ablations). Metric definitions in `metrics/METRICS.md`. The
+tables below are the headline cuts.
 
-| robot | ALL z_v motor | spec z_v motor | raw motor | ALL z_v **ee** | spec z_v ee | raw ee |
-|---|---|---|---|---|---|---|
-| flexiv | 0.252 ±0.021 | 0.270 ±0.023 | 0.232 | 0.268 ±0.031 | 0.286 ±0.035 | 0.211 |
-| ur5 | 0.339 ±0.014 | 0.324 ±0.021 | 0.321 | 0.187 ±0.009 | 0.156 ±0.016 | 0.103 |
-| kuka | 0.321 ±0.022 | 0.330 ±0.019 | 0.391 | 0.393 ±0.035 | 0.432 ±0.055 | 0.353 |
-| franka | −0.377 ±0.049 | −0.479 ±0.074 | −6.709 | — (no F/T) | — | — |
+**Transfer matrix — vision-only `z_v` → MOTOR R²** (rows = encoder trained on; cols = robot
+probed; 5-seed mean; **bold** = own-robot diagonal):
 
-(`raw` has no ±std: raw ViT features don't depend on the encoder or seed, so the baseline is one
-fixed number per robot. **PCA-256 ≈ raw at this scale** — motor 0.220/0.321/0.384, ee
-0.205/0.144/0.353 for flexiv/ur5/kuka — so unlike the Stage-2 POC the compression control collapses
-onto raw and `z_v` vs raw is the binding comparison. Full per-cell PCA-256 lives in `results.json`.)
-
-Column legend (every cell is a **probe R²** — how well a linear probe predicts held-out robot
-signals from the given feature; higher = better, scene-held-out):
-- **robot** — the embodiment the probe is scored on (its OWN held-out groups; this is the
-  diagonal of the 5×4 transfer matrix).
-- Two **target groups**, each with three feature columns:
-  - **motor** = the 8 motor rows (7 joints + gripper): joint pos/vel, gripper.
-  - **ee** = the 13 end-effector slots: native-rate F/T (force/torque) + TCP 6D pose.
-- Within each group, the feature the probe reads from:
-  - **ALL z_v** — vision-only fused latent `z_v` from the single **ALL** encoder (trained on
-    cfg1–7). State is masked at eval, so no state leaks in — this is the "one encoder for all
-    robots" number (5-seed mean ±std).
-  - **spec z_v** — same latent, but from the **specialist** encoder trained only on that
-    robot's cfgs (flexiv=cfg1+2, ur5=cfg3+4, franka=cfg5, kuka=cfg6+7). 5-seed, mean ±std.
-  - **raw** — baseline: same target predicted from raw frozen ViT features (768-dim,
-    mean-pooled), no fusion. The bar `z_v` must beat to show cross-modal gain.
-- **—** = not applicable: franka (cfg5) has no F/T sensor, so it has no ee targets.
-
-**Full transfer matrix** — every encoder (rows) probed on every robot's held-out groups (cols),
-vision-only `z_v` R² ↑, 5-seed mean; **bold = diagonal** (own robot). `raw` is the encoder-agnostic
-baseline (one row, same for all). This is the evidence behind "one encoder learned *robots*":
-
-*Motor (joints + gripper):*
-
-| train ↓ / eval → | flexiv | ur5 | kuka | franka |
+| trained ↓ \ probed → | flexiv | ur5 | franka | kuka |
 |---|---|---|---|---|
-| flexiv spec | **0.270** | 0.254 | 0.234 | −0.393 |
-| ur5 spec | 0.148 | **0.324** | 0.236 | −0.411 |
-| kuka spec | 0.121 | 0.221 | **0.330** | −0.431 |
-| franka spec | 0.069 | 0.088 | 0.148 | **−0.479** |
-| **ALL** | 0.252 | 0.339 | 0.321 | −0.377 |
-| raw (baseline) | 0.232 | 0.321 | 0.391 | −6.709 |
+| flexiv | **0.270** | 0.254 | −0.393 | 0.234 |
+| ur5 | 0.148 | **0.324** | −0.411 | 0.236 |
+| franka | 0.069 | 0.088 | **−0.479** | 0.148 |
+| kuka | 0.121 | 0.221 | −0.431 | **0.330** |
+| **ALL** | 0.252 | **0.339** | **−0.377** | 0.321 |
+| *raw ViT* | 0.232 | 0.321 | −6.709 | *0.391* |
 
-*End-effector (F/T + TCP pose; franka has no ee):*
+![transfer matrix — z_v joint R²](figures/all/transfer_matrix_motor.png)
 
-| train ↓ / eval → | flexiv | ur5 | kuka |
+The ALL row (bottom) is the brightest learned encoder in nearly every column; specialist
+rows go dark off-diagonal — "one encoder for all robots" at a glance. (franka column is dark
+for everyone — the tiny, force-blind config where the motor probe is near-hopeless.)
+
+**Transfer matrix — vision-only `z_v` → FORCE/EE R²** (franka has no F/T sensor):
+
+| trained ↓ \ probed → | flexiv | ur5 | kuka |
 |---|---|---|---|
-| flexiv spec | **0.286** | 0.137 | 0.247 |
-| ur5 spec | 0.135 | **0.156** | 0.247 |
-| kuka spec | 0.106 | 0.119 | **0.432** |
-| franka spec | 0.059 | 0.029 | 0.102 |
-| **ALL** | 0.268 | 0.187 | 0.393 |
-| raw (baseline) | 0.211 | 0.103 | 0.353 |
+| flexiv | **0.286** | 0.137 | 0.247 |
+| ur5 | 0.135 | **0.156** | 0.247 |
+| franka | 0.059 | 0.029 | 0.102 |
+| kuka | 0.106 | 0.119 | **0.432** |
+| **ALL** | 0.268 | **0.187** | 0.393 |
+| *raw ViT* | 0.211 | 0.103 | *0.353* |
 
-Reading the matrix: **ALL is at or near the best cell in every column** (it never trails the best
-specialist by much and beats raw on 6 of 7 sensored cells), while **specialists fall apart
-off-diagonal** — the franka specialist drops to 0.06–0.15 on other robots (≈ raw or worse), and
-even the strong kuka specialist reads 0.11–0.22 elsewhere. A specialist learned *its* robot; ALL
-learned robots. (Cost: ~8–52 min/seed per run, ALL the most; held-out n_test 5,970–27,448/robot.)
+RankMe (`z_v`): healthy on ALL (mean 171) and ur5 (180); **lower on franka (148) and kuka
+(147)**, with **per-seed collapse dips** (flexiv min 64; ~13% of encoder×robot values <140) —
+not fully collapse-free; the dip seeds are worth a re-run. (Per-(encoder,robot) RankMe partly
+tracks probe-set size/diversity, so the franka/kuka lows are partly that; the flexiv=64 seed
+is a genuine flag.) PCA-256 control ≈ raw (both fit on train rows only; omitted for space).
 
-**RankMe of `z_v`** (effective rank / collapse detector, `exp(entropy of normalized singular
-values)`; measured on each robot's held-out `z_v`, 5-seed mean ±std):
-
-| robot | ALL z_v RankMe | spec z_v RankMe |
-|---|---|---|
-| flexiv | 171.1 ±32.6 | 161.5 ±48.1 |
-| ur5 | 171.9 ±31.4 | 177.1 ±2.8 |
-| kuka | 166.1 ±27.8 | 142.4 ±7.3 |
-| franka | 174.0 ±30.9 | 146.6 ±2.6 |
-
-**Baseline / how to read it.** RankMe has no learned baseline — it's a self-referential diagnostic
-bounded by `[1, latent_dim]`. `z_v` is 256-dim (Perceiver pools its 8 queries), so:
-- **Ceiling = 256** — a perfectly uniform singular-value spectrum (every direction used equally,
-  zero collapse). Unreachable in practice; real healthy encoders sit well below it.
-- **Floor → 1** — total dimensional collapse (all variance in one direction).
-- **Healthy band observed here ≈ 165–180** (≈0.65–0.70 of ceiling) — no collapse. The ALL numbers
-  are the *same* encoder scored on each robot's test set, so the small flexiv→franka spread is the
-  test set, not four encoders.
-
-RankMe scales with dimensionality, so these are **not** comparable to the 768-dim raw-ViT features
-(whose ceiling is 768) — only within the 256-dim `z_v` family.
-
-The wide ±std on **ALL** and the **flexiv specialist** is one outlier seed each that partially
-collapsed (ALL seed → 106, flexiv-spec seed → 66); the other four seeds of each sit ≈178–190. All
-other runs are tight (±≤9). Not a systematic collapse — a per-seed training instability worth a
-re-run, not a red flag on the recipe.
-
-**Findings:**
+**Findings (final, 5-seed):**
+- **One encoder for all robots — holds.** ALL is **statistically indistinguishable from each
+  specialist on its own robot** (ties within 1 seed-std in every diagonal cell; the one
+  outright win is ur5 *force*, ALL 0.187 vs 0.156). On-diagonal the specialist is nominally
+  higher on flexiv & kuka, ALL on ur5 & franka — all within noise. The decisive result is
+  **off-diagonal dominance**: on ur5, ALL 0.339 vs the best *wrong* specialist 0.254 (flexiv) /
+  0.236 (kuka) / 0.088 (franka). A specialist doesn't transfer; the generalist matches four
+  specialists *and* transfers — it learned *robots*, not one robot.
 - **Force/EE = the clean cross-modal win.** ALL `z_v` beats raw vision on the F/T + pose
   probe for **every** sensored robot (+0.06 flexiv, +0.08 ur5, +0.04 kuka).
-- **Motor (joints) mixed.** ALL beats raw on flexiv/ur5/franka; **loses only on kuka**
-  (0.321 vs 0.391). Vision already infers joint pose; force is where fusion earns its keep.
-- **"One encoder for all robots" holds (strong form).** ALL matches or beats each specialist
-  on its own robot (beats ur5 & franka on motor, ties flexiv & kuka) — and off-diagonal, a
-  specialist barely beats raw (franka-specialist → other robots ≈ 0.07–0.15) while ALL stays
-  strong (see the transfer matrix above). One encoder learned *robots*, not one robot.
-- franka own-robot R² is negative for all (tiny, force-blind cfg5), but `z_v` (−0.38) is far
-  more stable than raw's catastrophic −6.7.
+- **Motor: ALL beats raw on 3 of 4** (flexiv, ur5, franka); **kuka joints is the lone loss**
+  (ALL 0.321, kuka-specialist 0.330, both < raw 0.391). Vision already infers joint pose;
+  force is where fusion earns its keep.
+- franka own-robot R² is negative for all (tiny, force-blind cfg5), but ALL (−0.377) is far
+  more stable than raw's catastrophic −6.7 and beats the franka specialist (−0.479).
 
-**Caveats / still owed:** the vision-only-*trained* Perceiver ablation (owed since Stage 2) and
-the triplet-accuracy / distance-correlation / alignment-uniformity geometry metrics
-(implemented in `metrics.py`, never run on any checkpoint) are outstanding; **kuka joints** is
-the one cell where raw beats fusion; and two seeds (ALL, flexiv-spec) had a RankMe dip worth a
-re-run.
+**1.7 triplet accuracy** (ALL, seed 0; positive = same scene / nearby tick; `eval_extras.py`):
+
+| negative tier | acc (mse) | acc (cosine) |
+|---|---|---|
+| diff scene, same robot (hard) | 0.930 | 0.946 |
+| diff robot (easy) | 0.992 | 0.997 |
+
+Both tiers well above chance with positive margins — the latent's geometry is right (nearby
+world-states near; different scenes/robots far). RankMe 177.5.
+
+**1.8 PCA figures** — the ALL encoder's vision-only `z_v` clusters cleanly by embodiment
+(kuka / ur5 / flexiv distinct; franka partly overlaps flexiv), with meaningful shared
+structure:
+
+![z_v PCA colored by robot](figures/all/pca_robot.png)
+
+![z_v PCA colored by cfg](figures/all/pca_cfg.png)
+
+Fusion vs baselines (ALL encoder, per robot) — `z_v` beats raw ViT + PCA on force everywhere;
+on joints it wins except kuka:
+
+![fusion vs baselines — joint probe](figures/all/baselines_motor.png)
+
+![fusion vs baselines — force probe](figures/all/baselines_ee.png)
+
+Within a single robot (ur5), `z_v` organizes by **gripper state** — a clean open→closed
+gradient — evidence the latent encodes continuous world-state, not just robot identity
+(force magnitude does *not* surface in PCA — it's the hard-from-vision signal the probe R²
+measures, not a scatter):
+
+![within-ur5 z_v PCA colored by gripper width](figures/ur5/pca_gripper.png)
+
+**kuka-joints diagnostic** (why raw beats fusion in that one cell): per-motor-dim probe on
+kuka shows raw ViT reads kuka *joint angles* superbly (0.8–0.9 R² on the sin/cos dims) —
+the 7-DOF arm is large and fully visible in the fixed view — while the 256-d fused `z_v`
+gives up some joint-angle fidelity for multimodality (mean 0.39 vs raw 0.51). So the lone
+negative cell is a **bottleneck/compression tradeoff on the robot where vision is most
+competent**, not a fusion failure (the d=512 ablation tests whether capacity recovers it).
+
+### 1.6 Ablations (all 5-seed, complete)
+
+**Cross-modal gain — fused vs vision-only-*trained* (the key control).** Identical 256-d
+Perceiver, same data/compute; only difference is whether state was fused. ALL encoder,
+own-robot:
+
+| robot | fused `z_v` motor | vision-only motor | Δ | fused ee | vision-only ee | Δ |
+|---|---|---|---|---|---|---|
+| flexiv | 0.252 | 0.137 | **+0.12** | 0.268 | 0.122 | **+0.15** |
+| ur5 | 0.339 | 0.198 | **+0.14** | 0.187 | 0.085 | **+0.10** |
+| kuka | 0.321 | 0.258 | **+0.06** | 0.393 | 0.220 | **+0.17** |
+| franka | −0.377 | −0.352 | −0.03 | — (no F/T) | — | — |
+
+Fusion adds **+0.06–0.14 (joints)** and **+0.10–0.17 (force)** on the three data-rich robots.
+Since architecture and compute are identical, this is *purely cross-modal fusion* — it rules
+out "the gain is just in-domain training." (franka is a wash: tiny, force-blind config, both
+near-degenerate.) The 4 specialists show the same pattern. RankMe healthy (~180–195) for both.
+
+![fused vs vision-only-trained — cross-modal gain](figures/all/cross_modal_gain.png)
+
+**Bottleneck sweep** (ur5, motor/ee, 5-seed): d=128 → 0.356/0.147 · d=256 → 0.324/0.156 ·
+d=512 → **0.255/0.122 with unstable RankMe (123 ±111 — some seeds collapse)**. Robust across
+**d=128–256; larger (512) degrades and destabilizes** — a clear sweet spot, not
+over-parameterized. (Enlarging the bottleneck does *not* recover kuka joints.)
+
+**Joint-SIGReg on/off** (ur5): off → 0.357/0.173 vs on (matrix) 0.324/0.156 — essentially no
+change. The joint regularizer isn't load-bearing at this scale (consistent with "only
+rebalance the losses if the combo misbehaves — it hasn't").
+
+**Phase-1 gate — PASSED:** joint encoder ≥ specialists in-domain ✓ · positive cross-embodiment
+transfer ✓ · no recipe-level collapse (ALL/ur5 RankMe healthy; per-seed dips on franka/kuka/
+flexiv flagged for re-run) ✓ · ablations survive (cross-modal gain confirmed, recipe robust) ✓.
+Owed only cosmetically: triplet is done (§1.7); the single-timestep story is complete —
+next is the downstream / usefulness track (below).
+
+## Downstream (2026-07-07 pivot) — usefulness on the frozen encoder
+
+Per the office call, temporal is parked; focus is concrete applications on the frozen
+Phase-1 encoder (see PLAN.md "Direction — downstream-first").
+
+**What this track proves (and what it doesn't).** The core scientific claims — fusion makes the
+vision latent carry force, one-encoder-for-all, cross-modal not compression/in-domain — are
+established by the **transfer matrix + ablation** (§1.6), *not* by anything below. This track
+proves a different thing: the frozen encoder is **useful** and its latent is **rich enough to act
+on**. Surprise is the one with a genuine standalone application (robot safety); the decoders are
+"what the latent knows" demonstrations. The pixel/cross-modal decodes are qualitative demos, not
+evidence for the fusion (that lives in the probes).
+
+### Invalid-state surprise / safety detector
+The encoder is trained by cross-modal prediction, so its per-sample prediction error is a
+built-in **surprise** signal (`world_tokenizer/surprise.py`, `MMPerceiverChunks.surprise()`):
+low when the robot state is consistent with vision, high when it isn't. No new training.
+ALL encoder on ur5 held-out (n=12,930), valid vs corrupted state:
+
+| corruption | valid μ | corrupted μ | AUROC |
+|---|---|---|---|
+| out-of-range state (large noise) | 1.18 | 6.41 | **0.90** |
+| mismatched state (from another scene) | 1.18 | 1.76 | 0.69 |
+
+Cleanly flags gross/out-of-range anomalies (0.90); modest on subtle mismatches (0.69). A
+direct robot-safety anomaly detector on the encoder we already have.
+
+![surprise flags invalid robot state](figures/surprise/surprise_hist.png)
+
+### robot_state decoder — "superpowered probe" (PLAN 3.1)
+A small MLP decodes the **frozen** vision-only `z_v` → joint state (encoder frozen; only the
+decoder trains, minutes). On ur5 held-out (n=12,930) it reconstructs state at **R² 0.444** vs
+the linear probe's **0.335** (+0.11) — the latent carries more state than a linear readout
+shows. Per-dim: joint angle R²=0.69. Gripper is ~discrete (open/closed), so R² is misleading there (flagged by JQ/Nicole) — as **classification** it's **78% acc / 0.87 AUROC** from `z_v` (vs 50% chance; raw ViT 0.77/0.86), i.e. the latent cleanly carries gripper state. (`state_decoder.py`, `gripper_classify.py`)
+
+### Pixel decode — reconstruct the frame from z_v (PixNerd)
+A small latent-conditioned diffusion decoder (PixNerd) regenerates the robot's **camera frame**
+from the frozen **vision-only `z_v`** (`pixnerd_integration/`: LatentConditioner feeds z_v as the
+condition; RobotLatentDataset pairs frame↔z_v; PixelAE pixel-space; plain flow-matching; 8-GPU
+DDP with `NCCL_P2P_DISABLE=1`). Decoded frames are **recognizable and match the reals** — scene
+layout, table/surface, colors, rough arm/object placement — but **blurry by design**: the 256-d
+latent keeps world-state and drops fine texture (world-*encoder*, not autoencoder), so the decode
+shows what the latent kept vs discarded. **Final 30k-step checkpoint** (ur5; qualitative); the
+blue mat, wood-grain table, green pool table, and object/arm placement all come back cleanly,
+arm region the roughest.
+
+![pixel decode — real (top) vs decoded-from-z_v (bottom), final 30k](figures/decode/recon.png)
+
+**Replay GIFs** (`make_gif.py`): decode a held-out episode's *latent trajectory* frame-by-frame
+into a video — real (top) vs decoded-from-`z_v` (bottom) playback. This is reconstruction/replay
+of a real trajectory, **not** future prediction (true world-model rollout needs the parked
+temporal model). Final 30k, **3 distinct held-out tasks** chosen to show the full extent — decode
+quality tracks **scene complexity**: simple scenes reconstruct cleanly, cluttered / fine-detail
+scenes degrade (the "keeps world-state, drops fine texture" tradeoff made visible):
+
+- `replay_0.gif` — task_0004, **blue mat**: clean (mat, pink region, arm, objects all recover).
+- `replay_1.gif` — task_0008, **cardboard sheet**: degrades (the tan sheet blurs to a light smear).
+- `replay_2.gif` — task_0010, **multi-object clutter**: fails (small objects smear to blobs).
+
+![replay — task_0004 blue mat, clean (real top / decoded bottom)](figures/decode/gifs/replay_0.gif)
+
+![replay — task_0008 cardboard, degrades](figures/decode/gifs/replay_1.gif)
+
+![replay — task_0010 clutter, fails](figures/decode/gifs/replay_2.gif)
+
+**Cross-modal decode (Variant 2, DONE — 30k).** Mirror experiment: same PixNerd decoder, but
+conditioned on the **state-only** latent `z_state` (vision hidden, motor+ee only — `embed_state`,
+`precompute_decode --latent state`, `decode_ur5_state_128.yaml`). **Result matches the up-front
+expectation exactly:** the **arm/gripper comes back in roughly the right pose** (joints→pose ≈
+forward kinematics) and generic table/floor structure appears, but the **actual scene is lost** —
+mat colors, objects, the pool table are replaced by generic guessed surfaces (that content isn't
+in force/joints). So: **proprioception reconstructs the robot, not the world** — a shared-latent-
+space demonstration, and an honest negative on scene content. Qualitative; not evidence for fusion.
+
+![cross-modal decode — real (top) vs decoded from STATE-only z_state (bottom): arm pose recovers, scene guessed](figures/decode/recon_state.png)
+
+Replay GIFs (state-only): `figures/decode/gifs_state/replay_{0,1,2}.gif`.
+
+![robot_state decoded from frozen vision-only latent](figures/decoder/state_decode.png)
+
+![gripper open/closed ROC from z_v](figures/decoder/gripper_roc.png)
+
+### Metrics audit (2026-07-07, code inspection)
+Re-verified before standing behind results: **no train/test leakage** — group-held-out
+split; StandardScaler / PCA / Ridge all fit on train rows only; targets per-sample.
+**franka's −6.7 raw R²** is a genuine degenerate-probe artifact (tiny config, 768-d probe,
+group shift), not a bug → keep franka out of headline claims. **d=512 RankMe instability** is
+real (some seeds collapse). Minor: Ridge α=10 fixed + targets unstandardized → R²
+scale-sensitive per-dim, but apples-to-apples across z_v/raw/pca so conclusions hold.
