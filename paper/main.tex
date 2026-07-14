@@ -577,7 +577,7 @@ The vision-only control $z_v^{\mathrm{vo}}$ of Table~\ref{tab:main} is an identi
   \small
   \caption{Cross-modal gain per embodiment ($R^2\uparrow$, 5-seed mean), comparing the fused latent $z_v$ with the compute-matched vision-only control $z_v^{\mathrm{vo}}$.}
   \label{tab:crossmodal}
-  \begin{tabular}{lcccc}
+  \begin{tabular}{lrrrr}
     \toprule
     & \multicolumn{2}{c}{motor $R^2$} & \multicolumn{2}{c}{end-effector $R^2$} \\
     \cmidrule(lr){2-3}\cmidrule(lr){4-5}
@@ -608,13 +608,13 @@ The end-effector probe mixes force/torque with TCP pose, so we split it (Kepler-
   \small
   \caption{Force isolated from pose ($R^2\uparrow$ on held-out rows; the $z_v$ force column is 5-seed mean$\pm$std, the remaining columns are 5-seed means or deterministic). Force $=$ F/T dims $[0{:}6]$. The fused latent beats PT-ViT and the compute-matched vision-only control $z_v^{\mathrm{vo}}$ on every sensored robot (paired $t$, $p\le0.012$), though absolute force $R^2$ is modest; pose-only and the pose-partialled residual (force$\perp$pose) are shown for context.}
   \label{tab:forceonly}
-  \begin{tabular}{lccccc}
+  \begin{tabular}{lr@{\,$\pm$\,}lrrrr}
     \toprule
-    robot & $z_v$ force & $z_v^{\mathrm{vo}}$ force & PT-ViT force & $z_v$ pose & $z_v$ force$\perp$pose \\
+    robot & \multicolumn{2}{c}{$z_v$ force} & $z_v^{\mathrm{vo}}$ force & PT-ViT force & $z_v$ pose & $z_v$ force$\perp$pose \\
     \midrule
-    flexiv & $0.049\pm0.009$ & $0.010$ & $-0.005$ & $0.413$ & $+0.008$ \\
-    ur5    & $-0.001\pm0.008$ & $-0.019$ & $-0.115$ & $0.311$ & $-0.025$ \\
-    kuka   & $0.187\pm0.021$ & $0.067$ & $0.103$ & $0.530$ & $+0.007$ \\
+    flexiv & $0.049$ & $0.009$ & $0.010$ & $-0.005$ & $0.413$ & $+0.008$ \\
+    ur5    & $-0.001$ & $0.008$ & $-0.019$ & $-0.115$ & $0.311$ & $-0.025$ \\
+    kuka   & $0.187$ & $0.021$ & $0.067$ & $0.103$ & $0.530$ & $+0.007$ \\
     \bottomrule
   \end{tabular}
 \end{table}
@@ -627,7 +627,7 @@ To separate embodiment diversity from data volume, we retrain Kepler-Encoder-v0.
   \small
   \caption{Data-budget-matched Kepler-Encoder-v0.1 (vision-only $z_v$ motor $R^2\uparrow$, 5-seed mean). ``matched KEv0.1'' is trained on $32{,}870$ frames, the mean specialist's budget. It trails the specialist on-diagonal by $0.02$--$0.06$ but, unlike any specialist, stays strong across all robots.}
   \label{tab:matched}
-  \begin{tabular}{lcccc}
+  \begin{tabular}{lrrrr}
     \toprule
     robot & matched KEv0.1 & full KEv0.1 & specialist & PT-ViT \\
     \midrule
@@ -661,15 +661,15 @@ Beyond probes, we ask what the \emph{frozen} encoder is directly useful for, wit
   \small
   \caption{Probe transfer across sensor configurations (ridge probes, $R^2\uparrow$ on held-out rows; 3-embodiment mean, 5-seed mean $\pm$std). A probe fit on the full-context latent $z$ collapses when applied unchanged to the vision-only latent $z_v$, while refitting on $z_v$ recovers the main-table performance.}
   \label{tab:transfer}
-  \begin{tabular}{lcc}
+  \begin{tabular}{lr@{\,$\pm$\,}lr@{\,$\pm$\,}l}
     \toprule
-    & \multicolumn{2}{c}{linear probe $R^2\uparrow$} \\
-    \cmidrule(lr){2-3}
-    read-out & motor & end-effector \\
+    & \multicolumn{4}{c}{linear probe $R^2\uparrow$} \\
+    \cmidrule(lr){2-5}
+    read-out & \multicolumn{2}{c}{motor} & \multicolumn{2}{c}{end-effector} \\
     \midrule
-    fit on $z$, evaluate on $z$ (storage, \S\ref{sec:storage}) & 0.566 $\pm$0.039 & 0.674 $\pm$0.047 \\
-    fit on $z$, evaluate on $z_v$ (transferred)               & $-$0.628 $\pm$0.431 & $-$0.534 $\pm$0.269 \\
-    fit on $z_v$, evaluate on $z_v$ (refit, Table~\ref{tab:main}) & 0.304 $\pm$0.019 & 0.282 $\pm$0.026 \\
+    fit on $z$, evaluate on $z$ (storage, \S\ref{sec:storage}) & 0.566 & 0.039 & 0.674 & 0.047 \\
+    fit on $z$, evaluate on $z_v$ (transferred)               & $-$0.628 & 0.431 & $-$0.534 & 0.269 \\
+    fit on $z_v$, evaluate on $z_v$ (refit, Table~\ref{tab:main}) & 0.304 & 0.019 & 0.282 & 0.026 \\
     \bottomrule
   \end{tabular}
 \end{table}
@@ -696,7 +696,7 @@ Beyond probes, we ask what the \emph{frozen} encoder is directly useful for, wit
   \small
   \caption{Zero-shot leave-one-robot-out (vision-only $z_v$ $R^2\uparrow$, 5-seed mean): each robot is probed by an encoder trained on the \emph{other three} and never exposed to it. The zero-shot latent trails PT-ViT on motor for every non-degenerate robot; franka is force-blind and degenerate for both (PT-ViT collapses to $-6.71$).}
   \label{tab:loro}
-  \begin{tabular}{lcccc}
+  \begin{tabular}{lrrrr}
     \toprule
     held-out robot & LORO $z_v$ motor & PT-ViT motor & LORO $z_v$ ee & PT-ViT ee \\
     \midrule
@@ -771,7 +771,7 @@ Table~\ref{tab:vitbase} reports the two 768-d ViT baselines, evaluated under the
 
 \section{Notation}
 \label{sec:notation}
-Table~\ref{tab:notation} lists every symbol used in the Method (\S\ref{sec:method}). Symbols are chosen so that no glyph carries two meanings. Two conventions resolve near-collisions. Case is significant, so $M$ (query count) and $m$ (the motor modality) are distinct, as are $N$ (a token count) and any lowercase index. Weight is significant, so a plain $e$ (the ee modality label) and a boldface $\mathbf{e}_{(\cdot)}$ (a learned modality embedding) are distinct. The generic held-out modality is always indexed by $k$, never by $m$, so $m$ refers only to the motor stream.
+Table~\ref{tab:notation} lists every symbol used in the Method (\S\ref{sec:method}), together with the evaluation-specific symbols introduced in \S\ref{sec:experiments}. Symbols are chosen so that no glyph carries two meanings. Two conventions resolve near-collisions. Case is significant, so $M$ (query count) and $m$ (the motor modality) are distinct, as are $N$ (a token count) and any lowercase index. Weight is significant, so a plain $e$ (the ee modality label) and a boldface $\mathbf{e}_{(\cdot)}$ (a learned modality embedding) are distinct. The generic held-out modality is always indexed by $k$, never by $m$, so $m$ refers only to the motor stream.
 
 \begin{table}[!htbp]
   \centering
@@ -813,13 +813,15 @@ Table~\ref{tab:notation} lists every symbol used in the Method (\S\ref{sec:metho
     $z^{(\backslash k)}$ & fused latent with modality $k$ held out \\
     $z_v$ & vision-only latent (motor and ee hidden), the exported embedding \\
     $z_v^{\mathrm{vo}}$ & latent of the vision-only-\emph{trained} control encoder $f_{\theta_{\mathrm{vo}}}$ (\S\ref{sec:baselines}) \\
+    $d_{\mathrm{corr}}$ & Spearman correlation between pairwise latent and true-state distances (\S\ref{sec:setup}) \\
+    R\textsubscript{LDA} & LDA effective rank over temporal-neighbor views~\citep{jepamsac2026} (\S\ref{sec:setup}) \\
     $f_\theta,\,\bar f_{\bar\theta}$ & online encoder and its EMA target copy \\
     $h_k$ & per-modality predictor head for modality $k$ \\
     $\operatorname{sg}[\cdot]$ & stop-gradient operator \\
     $\mathcal{L}_{\mathrm{pred}}$ & masked cross-modal prediction loss \\
     \bottomrule
   \end{tabular}
-  \caption{Symbols used in the Method (\S\ref{sec:method}).}
+  \caption{Symbols used in the Method (\S\ref{sec:method}) and the evaluation (\S\ref{sec:experiments}).}
   \label{tab:notation}
 \end{table}
 
