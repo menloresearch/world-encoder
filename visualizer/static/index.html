@@ -20,22 +20,8 @@
   <section id="view-data" class="view">
     <aside class="sidebar">
       <div id="cfg-pills" class="pill-row" aria-label="config"></div>
-      <div id="scene-filters" class="scene-filters" aria-label="filter scenes by number">
-        <input id="f-task" class="col-filter" type="number" min="1" step="1"
-               placeholder="task #" aria-label="task number" autocomplete="off">
-        <input id="f-user" class="col-filter" type="number" min="1" step="1"
-               placeholder="user #" aria-label="user number" autocomplete="off">
-        <input id="f-scene" class="col-filter" type="number" min="1" step="1"
-               placeholder="scene #" aria-label="scene number" autocomplete="off">
-      </div>
-      <label id="split-filter-row" class="split-filter-row" hidden>
-        <span class="muted">split</span>
-        <select id="f-split" aria-label="train/test split filter">
-          <option value="all">all</option>
-          <option value="train">train only</option>
-          <option value="test">test only</option>
-        </select>
-      </label>
+      <input id="scene-search" type="search" placeholder="Filter scenes… (task, user, scene)"
+             autocomplete="off">
       <div id="scene-count" class="muted"></div>
       <div id="scene-list" class="scene-list"></div>
     </aside>

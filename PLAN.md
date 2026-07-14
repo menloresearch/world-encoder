@@ -1,8 +1,55 @@
 # PLAN v2 — Full-RH20T Vis+State Matrix Run → Temporal → Decoder
 
 Rewritten 2026-07-06 after the weekend's work landed on `user/jiaqi` (see DATA.md /
-METRICS.md there). Supersedes the 2026-07-03 PLAN (kept in git history). Project context in
-[HANDOFF.md](HANDOFF.md); results in [EXPERIMENTS.md](EXPERIMENTS.md).
+METRICS.md there). Supersedes the 2026-07-03 PLAN (kept in git history). Results in
+[EXPERIMENTS.md](EXPERIMENTS.md); data in [DATA.md](DATA.md).
+
+## Current status (2026-07-07)
+
+**Phase 1 (single-timestep matrix) — DONE, 5 seeds.** One-encoder-for-all holds: the ALL
+encoder matches/beats each specialist on its own robot and dominates off-diagonal. Force/EE
+is the clean cross-modal win (ALL `z_v` > raw vision on every sensored robot); joint gains
+are marginal (kuka joints the lone loss); RankMe healthy, no collapse. Full 5×4 matrix and
+numbers in [EXPERIMENTS.md](EXPERIMENTS.md).
+
+| stage | proves | status |
+|---|---|---|
+| Stage 0/1 — vision-only baseline | one frame can't see force (R²≈0) | ✅ |
+| Stage 2 — single-timestep fusion (cfg3, cfg3+4) | fusion works | ✅ |
+| Phase 1 — full-RH20T 5×4 matrix | one encoder for all robots | ✅ (single-timestep) |
+| Phase 2 — Temporal | the multi-rate white-space bet | ⏸️ **parked** (2026-07-07 office call) |
+| Downstream / usefulness | prove the encoder is *useful* (concrete app) | 🟢 **ACTIVE track** |
+| Phase 3 — Decoder (video) | shows what the latent knows | 🟢 active (part of downstream) |
+| Loss #4 (action-cond.) · Audio · FLARE g(·) | causality / modalities / external | ⏸️ later / gated |
+
+## Direction — downstream-first (2026-07-07, office pivot)
+
+Phase 1 is COMPLETE (matrix + ablations passed — cross-modal gain confirmed). Per the office
+call: **temporal is higher-cost / lower-leverage right now; the win is a concrete downstream
+application that shows the encoder is useful.** So temporal (Phase 2) + action-conditioning
+(loss #4) are **parked**, and we focus on things that run on the *frozen Phase-1 encoder*:
+
+- [~] **A. Metrics audit + write-up** (audit DONE 2026-07-07 — leakage-free; franka degeneracy
+      real not a bug; write-up still pending) — re-verify the results stand (franka
+      degenerate cell, no train/test leakage, vision-only control fairness, RankMe on the
+      collapsed d=512 seeds, seed variance), then write up the Phase-1 findings.
+- [x] **B. Surprise / invalid-state safety detector** — DONE (`surprise.py`): AUROC 0.90
+      out-of-range, 0.69 mismatch; frozen encoder, no training. See EXPERIMENTS.md § Downstream.
+      Method: use the encoder's **cross-modal
+      prediction error as a "surprise" signal**: valid state → low, invalid/inconsistent
+      state → high. Demo: real vs corrupted-state chunks, show the score separates them.
+      In-house, **no new training**, direct robot-safety story. (JQ's idea.)
+- [~] **C. Video decode** — robot_state decoder ✅ (R² 0.45; joint angle 0.69) + gripper classification ✅ (78%/0.87 AUROC); pixel decode (PixNerd) ✅ pipeline validated + 8-GPU training, early preview reconstructs frames (blurry-by-design), sharper final pending. See EXPERIMENTS §Downstream + `pixnerd_integration/`.
+
+**Parked (with triggers):**
+- **Temporal (Phase 2)** — design kept in §Phase 2; revisit after downstream lands.
+- **Action-conditioning / control-into-predictor (loss #4)** — needs temporal machinery
+  (recurrent carry-forward Perceiver); a downstream *policy* may still consume actions as
+  inputs, which is fine and different.
+- **Encoder as `g(·)` for a VLA (FLARE-style)** — strong flagship downstream, but FLARE's
+  code is **not released** (GR00T N1.5 mentions it; impl absent from public Isaac-GR00T —
+  see issues #211/#215), so it needs reimplementation + a VLA pipeline + demo data ≈
+  **3–4 weeks**, gated on GR00T / You-Liang-Tan coordination. Not solo, not now.
 
 ## What changed since the last PLAN (2026-07-03 → 2026-07-06)
 
@@ -65,35 +112,36 @@ logic verified against installed stable_pretraining). **Verdict: solid to build 
 The safe scale-up of the validated Stage-2 recipe: frozen `e0` vision + Perceiver fusion,
 single timestep, masking over MODALITY. Do NOT unfreeze vision (Stage-1 evidence).
 
-- [ ] **1.1** Env on the A6000 VM: `uv sync`, dataloader smoke test.
-- [ ] **1.2** MMPerceiver v2 + trainer for the chunk packet: three token groups (vision
+- [x] **1.1** Env on the A6000 VM: `uv sync`, dataloader smoke test.
+- [x] **1.2** MMPerceiver v2 + trainer for the chunk packet: three token groups (vision
       patches / motor / ee), masks honored (cfg5's all-False ee_mask doubles as a free
       missing-modality robustness test), masked latent prediction over modality +
       per-modal SIGReg + joint SIGReg. **Every token carries its `ts` from day one** —
       that is the Phase-2 temporal slot; no data or interface rework later.
-- [ ] **1.3** Camera choice v1: ONE deterministic *external* camera per scene — exclude
+- [x] **1.3** Camera choice v1: ONE deterministic *external* camera per scene — exclude
       the wrist cam via the `in_hand` serials in rh20t_api `configs/configs.json`.
       (`chunk_state.py` currently takes `sorted(serials)[0]`, which is sometimes the
       wrist cam = the "multi-camera noise". Camera serials are rig-fixed per cfg —
       verified by sampling.) Multi-view *learning* is parked (see Parked).
-- [ ] **1.4** Run `precompute_chunks` for all 7 cfgs in parallel across the 7 A6000s →
+- [x] **1.4** Run `precompute_chunks` for all 7 cfgs in parallel across the 7 A6000s →
       NAS `caches/cfg{1..7}.npz` (~190k chunks at 15/scene ≈ ~56 GB patch fp16 — fits).
-- [ ] **1.5** **THE MATRIX:** 4 per-embodiment encoders (flexiv=cfg1+2 6,060 scenes,
+- [x] **1.5** **THE MATRIX:** 4 per-embodiment encoders (flexiv=cfg1+2 6,060 scenes,
       ur5=cfg3+4 2,993, franka=cfg5 1,321, kuka=cfg6+7 2,402) + 1 joint all-7 encoder,
       multi-seed, frozen split. Evaluate every encoder on every embodiment's held-out
       groups → 5×4 transfer matrix. This settles "one encoder vs per-embodiment"
       empirically — the cross-embodiment de-risking and the one-encoder thesis in a single run —
       and is the headline blog figure.
-- [ ] **1.6** Claims-protection ablations (cfg3-scale, cheap, BEFORE anything goes
+- [x] **1.6** Claims-protection ablations (cfg3-scale, cheap, BEFORE anything goes
       external): vision-only-*trained* Perceiver (isolates the cross-modal gain — still
       owed from Stage 2), bottleneck size, joint-SIGReg on/off.
-- [ ] **1.7** Eval: RankMe + probe R² + triplet accuracy (wire the selection — closes the
+- [x] **1.7** Eval: RankMe + probe R² + triplet accuracy (wire the selection — closes the
       METRICS.md TODO; cross-view / cross-embodiment pairs give the negative tiers),
       per-config breakdown, PCA-256 control, multi-seed error bars.
-- [ ] **1.8** Blog figures: PCA of the joint-encoder latent colored by robot / task / cfg.
+      *(DONE via `eval_extras.py`: triplet accuracy — hard tier 0.93, easy 0.99 — plus
+      RankMe, probe R², PCA-256 control, multi-seed error bars, per-embodiment breakdown.)*
+- [x] **1.8** Blog figures: PCA of the joint-encoder latent colored by robot / task / cfg.
 
-**Gate:** joint encoder ≥ per-embodiment in-domain; positive cross-embodiment transfer;
-no collapse; ablations survive.
+**Gate — ✅ PASSED (2026-07-07):** joint encoder ≥ per-embodiment in-domain; positive cross-embodiment transfer; no collapse; ablations survive (cross-modal gain +0.06–0.17, recipe robust).
 
 ## Phase 2 — Temporal (starts the DAY Phase-1 runs launch, not after)
 
@@ -127,6 +175,13 @@ white-space bet.
       deployment (no peeking at the future you predict); **test both causal vs bidirectional**
       for the within-window representation objective (V-JEPA-style bidirectional often wins
       on probe quality).
+- [ ] **2.3b SIGReg placement under time (record the rule; no design change).** SIGReg only
+      regularizes the *marginal* embedding distribution (anti-collapse); it does **not** learn
+      dynamics — the prediction objective (2.3) does. So its Epps–Pulley statistic must not pool
+      over time: **apply SIGReg per-timestep (each instant's marginal), never to a time-pooled
+      latent**, and treat its placement/strength (per-modal vs joint; on/off on the temporal
+      latent) as an ablation. Pre-empts the "LeJEPA/SIGReg is bad at time variance due to global
+      pooling" critique. Mirrored in paper §3.5 "SIGReg under time" (PR #8).
 - [ ] **2.4 Eval:** future force/contact prediction at varying Δt vs the single-timestep
       Phase-1 baseline.
 - [ ] **2.5 Decisive ablation:** continuous-time (no resample) **vs** resample-everything +
@@ -135,6 +190,26 @@ white-space bet.
 
 **Gate:** temporal masking beats single-timestep on future-state prediction with RankMe
 stable. Loss #4 (action-conditioned forward prediction) only after this gate.
+
+### Temporal architecture — window Perceiver now, recurrent Perceiver for the world-model
+
+Two ways to give the Perceiver time; we do them **in order**:
+
+- **(a) Window / set — Phase-2 start (what 2.1–2.5 build).** Dump a whole time-window of
+  timestamp-embedded tokens into ONE Perceiver and fuse them at once; continuous-time
+  embeddings carry the "when". Bidirectional (good for representation), simplest extension of
+  Phase 1. Fixed window, not streaming.
+- **(b) Recurrent / carry-forward — target for loss #4 / the world-model.** Carry the latent
+  as a persistent **belief state**: at each step feed the *new* observations using the
+  *previous* latent as the starting queries → an updated `z_t` summarizing everything seen so
+  far. RNN / recurrent-state-space-model-like (cf. Dreamer), with the Perceiver as the
+  observation-update operator. Why it matters: it is **naturally causal + streaming +
+  arbitrary-length**, and — the key part — it's the structure you **roll forward under an
+  action** ("given `z_t` and action `a_t`, predict `z_{t+1}`", then correct when the next
+  observation lands). That IS loss #4, and the step from *encoder* → *world-model*.
+  Caveats: harder to train (long-horizon credit assignment, latent drift); must decide what
+  to carry (full latent vs a compressed state). **Prove (a) first, then move to (b) with
+  actions.** (Idea raised 2026-07-07.)
 
 ## Phase 3 — Decoder (parallel track)
 
@@ -160,7 +235,7 @@ Phase-1 encoder. Prep notes: `~/brain/ishneet/youliangtan-papers.md` (kept out o
 | item | trigger |
 |---|---|
 | Multi-view training objective | Phase-1 analysis: measure same-tick cross-view latent distance with the v1 encoder. If views don't already cluster → add cross-VIEW masked prediction (predict side-view latent from wrist-view + state). Predict-don't-equate — never latent *equality* across views (dual-arm / wrist-cam info-asymmetry objection). Include latent **sum/mean-pool of per-view latents as the fusion baseline** (the neural-codec idea — the additive trick itself doesn't transfer: audio mixes additively at the sensor and codecs are near-lossless, cameras are projections and JEPA latents are lossy by design — but it's the right dumb baseline vs Perceiver fusion with view-tagged tokens). |
-| Loss #4 (action-conditioned) | Phase-2 gate passes (needs temporal machinery). |
+| Loss #4 (action-conditioned) | Phase-2 gate passes (needs temporal machinery). Target arch = **recurrent carry-forward Perceiver latent** rolled under actions — see §Phase 2 "Temporal architecture". |
 | Audio (full Stage 5) | Temporal proven. |
 | Discrete latent / disentanglement; dual-arm embedding-sum | Microfactory data (Stage 7) — RH20T is single-arm. |
 | Loss balancing (Kendall / GradBlend) | Only if the 3-loss balance misbehaves at scale (it hasn't). |
