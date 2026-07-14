@@ -153,16 +153,8 @@ Different robots expose different joint counts (6 for UR5, 7 for Flexiv, Franka,
 \subsection{Architecture: the cross-attention fuser}
 \label{sec:arch}
 
-\begin{figure}[!htbp]
-  \centering
-  \includegraphics[width=0.78\linewidth]{fig_architecture.png}
-  \caption{\textbf{The \texttt{MMPerceiver} fuser (single-timestep
-  configuration).} Concrete sizes shown are the instantiation used in this report; the method is defined for general token counts and width (\S\ref{sec:arch}). Three heterogeneous streams ($N_v$ frozen patch tokens, an $N_m$-row motor grid, and an $N_e$-slot end-effector window) are each linearly projected to the shared width $d$ and tagged with modality/position embeddings, forming an $N$-token context set. $M$ learned queries cross-attend to this set (Perceiver-IO style) and are mean-pooled into the fused latent~$z$. Training is \emph{masked cross-modal prediction}, where an attention mask hides one modality and $z$ must predict that modality's EMA-target embedding (predict-do-not-equate, MSE), regularized by per-modality and joint SIGReg. At evaluation only vision enters (motor/ee masked) and $z_v$ is the exported latent. Modality-colored inputs (vision blue, motor teal, ee orange); grey $=$ frozen backbone, green $=$ Perceiver, purple $=$ latent, red $=$ the LeJEPA objective.}
-  \label{fig:arch}
-\end{figure}
-
 \paragraph{Forward pass.} The fuser is a single asymmetric cross-attention
-block in which a fixed set of learned queries reads from the token set (\S\ref{sec:related}), and Figure~\ref{fig:arch} traces it end to end. The three projected streams are concatenated into a single context set of $N = N_v + N_m + N_e$ tokens ($N_v$ vision, $N_m$ motor, and $N_e$ ee), heterogeneous in origin but homogeneous in width $d$. A set of $M$ learned query vectors cross-attends over this set, and in each of $L$ depth blocks the queries attend to the context and pass through an FFN (pre-norm residuals), after which they are mean-pooled into a single fixed-size latent $z\in\mathbb{R}^{d}$. The per-stream token counts, the latent width $d$, the query count $M$, and the depth $L$ are hyperparameters, set to the values reported in the experiments (\S\ref{sec:experiments}). Attention masks serve two roles, encoding padding and validity as well as the modality masking of the training objective. The two mask types use opposite sign conventions, since chunk masks mark valid entries as \texttt{True}, whereas cross-attention masks mark blocked entries as \texttt{True}, so one is inverted before use.
+block in which a fixed set of learned queries reads from the token set (\S\ref{sec:related}), and the right panel of Figure~\ref{fig:loss} traces it end to end. The three projected streams are concatenated into a single context set of $N = N_v + N_m + N_e$ tokens ($N_v$ vision, $N_m$ motor, and $N_e$ ee), heterogeneous in origin but homogeneous in width $d$. A set of $M$ learned query vectors cross-attends over this set, and in each of $L$ depth blocks the queries attend to the context and pass through an FFN (pre-norm residuals), after which they are mean-pooled into a single fixed-size latent $z\in\mathbb{R}^{d}$. The per-stream token counts, the latent width $d$, the query count $M$, and the depth $L$ are hyperparameters, set to the values reported in the experiments (\S\ref{sec:experiments}). Attention masks serve two roles, encoding padding and validity as well as the modality masking of the training objective. The two mask types use opposite sign conventions, since chunk masks mark valid entries as \texttt{True}, whereas cross-attention masks mark blocked entries as \texttt{True}, so one is inverted before use.
 
 \paragraph{Formal specification.} The fuser realizes the encoder $f_\theta$ of \eqref{eq:encoder} after tokenization. Abusing notation, $f_\theta(x_v, x_m, x_e) = \mathrm{Fuse}(C, \mathcal{M}_{\mathrm{valid}})$ when every stream is present, and a stream dropped at evaluation corresponds to hiding its tokens, as in \eqref{eq:latents} below. The motor stream first zeroes the channels a robot does not populate and appends the validity bits as extra features, so the projection sees both the value and the fact that it is present,
 \begin{equation}
@@ -201,7 +193,14 @@ Writing $\mathcal{M}_{\mathrm{valid}}$ for the mask that blocks only invalid and
 \end{equation}
 where $z_v$, the vision-only latent obtained by hiding motor and ee, is the exported evaluation embedding. The held-out latents $z^{(\backslash k)}$ feed the predictor heads of \eqref{eq:objective}.
 
-\paragraph{Why a latent-query bottleneck.} Three properties suit this block to heterogeneous robot streams, over a full self-attention transformer or late concatenation of per-modality encoders. \emph{(i)~Compute decoupled from input size:} cross-attention from $M$ queries to $N$ tokens costs $O(NM)$, so adding a sensor or more patches grows the context linearly and leaves the latent width unchanged. \emph{(ii)~Fixed-size latent under variable input:} $z$ has the same shape whether a robot exposes 6 or 7 joints, carries a force sensor or not, or (at evaluation) sees vision alone, so masking rather than per-robot truncation carries embodiment-agnosticism; a hardware-absent sensor amounts to blocked columns, avoiding the per-embodiment ``stems'' HPT needs~\citep{hpt2024}. \emph{(iii)~Set-structured fusion:} position and modality live in the token embeddings rather than a fixed layout, so one block ingests any token set, and every query reads all modalities at once~\citep{perceiver2021}.
+\paragraph{Why a latent-query bottleneck.} Three properties suit this block to heterogeneous robot streams, over a full self-attention transformer or late concatenation of per-modality encoders. \emph{(i)~Compute decoupled from input size:} cross-attention from $M$ queries to $N$ tokens costs $O(NM)$ (Figure~\ref{fig:crossattn}), so adding a sensor or more patches grows the context linearly and leaves the latent width unchanged. \emph{(ii)~Fixed-size latent under variable input:} $z$ has the same shape whether a robot exposes 6 or 7 joints, carries a force sensor or not, or (at evaluation) sees vision alone, so masking rather than per-robot truncation carries embodiment-agnosticism; a hardware-absent sensor amounts to blocked columns, avoiding the per-embodiment ``stems'' HPT needs~\citep{hpt2024}. \emph{(iii)~Set-structured fusion:} position and modality live in the token embeddings rather than a fixed layout, so one block ingests any token set, and every query reads all modalities at once~\citep{perceiver2021}.
+
+\begin{figure}[!htbp]
+  \centering
+  \includegraphics[width=\linewidth]{perceiver_cross_attention.png}
+  \caption{The cross-attention bottleneck at matrix level, with the sizes of the reported instantiation. The context $C \in \mathbb{R}^{217\times256}$ (196 vision, 8 motor, 13 ee tokens) is projected once to keys and values; the $M=8$ learned queries score it as $A = \mathrm{softmax}(QK^\top/\sqrt{d})$, an $8\times217$ matrix rather than the $217\times217$ square that self-attention would fill (dashed outline), and the output $O = AV$ keeps 8 rows per block before the mean-pool to $z \in \mathbb{R}^{256}$. Cost therefore grows as $O(NM)$ with $M \ll N$.}
+  \label{fig:crossattn}
+\end{figure}
 
 \subsection{Training objective}
 \label{sec:objective}
@@ -220,8 +219,8 @@ The EMA target encoder is a slow copy of the online encoder, the momentum-target
 
 \begin{figure}[!htbp]
   \centering
-  \includegraphics[width=0.82\linewidth]{fig_loss.png}
-  \caption{Masked cross-modal prediction (shown hiding vision; the hidden modality rotates over vision/motor/ee). The online encoder fuses the visible modalities into $z$; a predictor maps $z$ to the held-out modality's latent, whose target is that modality's embedding from an EMA (slow) copy of the encoder, i.e.\ JEPA-style predict-the-latent, not pixel reconstruction. The loss is $\mathrm{MSE}(\text{prediction},\text{target})$ plus per-modality and joint SIGReg (LeJEPA), which prevents collapse.}
+  \includegraphics[width=\linewidth]{jepa_training.png}
+  \caption{The training objective as a joint-embedding predictive architecture. \emph{Left:} the generic JEPA template, in which an x-encoder and a y-encoder embed two views and a predictor maps one embedding to the other under a distance $D(\hat s_y, s_y)$~\citep{ijepa2023}. \emph{Right:} our instantiation. The visible modalities are projected (\emph{proj\_v}, \emph{proj\_e}, \emph{proj\_m}), tagged with modality and slot embeddings, and fused by the two-block Perceiver over 217 tokens into $z \in \mathbb{R}^{256}$; a per-modality MLP head $h_k$ then predicts the held-out modality's target embedding, produced by an EMA copy of that modality's projection under stop-gradient (motor shown hidden; the held-out modality rotates over vision, motor, and ee). The template's conditioning variable $c$ is unused. The loss is $\mathrm{MSE}(\text{prediction},\text{target})$ plus per-modality and joint SIGReg (LeJEPA), which prevents collapse.}
   \label{fig:loss}
 \end{figure}
 
@@ -561,6 +560,7 @@ Using the robot-agnostic chunk packet (\S\ref{sec:data}), we first ask whether t
     franka & 174.0 $\pm$30.9 & 146.6 $\pm$2.6 \\
     \bottomrule
   \end{tabular}
+  \vspace{30pt}
 \end{table}
 
 \paragraph{The per-embodiment picture matches the average.} On the end-effector probe the Kepler-Encoder-v0.1 latent beats PT-ViT on every sensored robot ($+0.06$/$+0.08$/$+0.04$; Table~\ref{tab:phase1diag}). On motor the gain is partial. The latent beats PT-ViT on flexiv and ur5 but not on kuka, where joint pose is already visible to the camera, so we expect the motor payoff to come with the temporal extension (\S\ref{sec:temporal}). Franka is the hardest embodiment, negative for every feature, but fusion stabilizes it ($-0.38$ against PT-ViT's $-6.71$).
@@ -647,7 +647,7 @@ Beyond probes, we ask what the \emph{frozen} encoder is directly useful for, wit
 
 \begin{figure}[!htbp]
   \centering
-  \includegraphics[width=0.52\linewidth]{surprise_hist.png}
+  \includegraphics[width=0.8\linewidth]{surprise_hist.png}
   \caption{Invalid-state detection on held-out ur5. The encoder's cross-modal prediction error (``surprise'') separates valid robot state from corrupted state with no additional training.}
   \label{fig:surprise}
 \end{figure}
@@ -656,7 +656,7 @@ Beyond probes, we ask what the \emph{frozen} encoder is directly useful for, wit
 
 \paragraph{Read-outs are configuration-specific.} A natural deployment hope is to fit one read-out on the fully-sensored latent and reuse it when sensors drop out. Table~\ref{tab:transfer} shows this does not work here. The same ridge probe that reads the full-context latent $z$ at $0.57$/$0.67$ scores \emph{below zero} when applied unchanged to $z_v$, worse than predicting the mean on every embodiment and target, while refitting on $z_v$ recovers the Table~\ref{tab:main} performance; the MLP read-out transfers no better. The two latents therefore encode state along different directions. This is consistent with the training objective, which predicts the held-out modality's embedding through a per-modality head (\S\ref{sec:objective}) and never aligns $z_v$ with $z$ itself. The practical rule for a downstream consumer at a single timestep is to fit its read-out on the latent of the sensor configuration it will run with; what stays invariant across configurations is the encoder, not the probe. The finding also motivates the temporal extension (\S\ref{sec:temporal}). In deployment, sensor dropout is usually transient, and a sensor that vanishes mid-stream remains constrained by its own recent past. An encoder that fuses across time can therefore hold the latent in one coordinate frame through the dropout, and whether that restores read-out transfer is a directly testable prediction for the temporal model.
 
-\begin{table}[!htbp]
+\begin{table}[!b]
   \centering
   \small
   \caption{Probe transfer across sensor configurations (ridge probes, $R^2\uparrow$ on held-out rows; 3-embodiment mean, 5-seed mean $\pm$std). A probe fit on the full-context latent $z$ collapses when applied unchanged to the vision-only latent $z_v$, while refitting on $z_v$ recovers the main-table performance.}
@@ -674,7 +674,7 @@ Beyond probes, we ask what the \emph{frozen} encoder is directly useful for, wit
   \end{tabular}
 \end{table}
 
-\begin{figure}[!htbp]
+\begin{figure}[!b]
   \centering
   \includegraphics[width=\linewidth]{state_decode_ridge.pdf}
   \caption{Joint angles decoded from the frozen vision-only $z_v$ by the standard ridge probe (seed 0), predicted vs.\ actual on each robot's held-out rows, all joints overlaid (300 points per joint; angles recovered via $\mathrm{atan2}$ from the predicted $\sin$/$\cos$ channels). Panel titles give each robot's overall motor $R^2$. The legend is shared across panels; its joint-7 entry applies only to the 7-DOF flexiv and kuka panels, while the ur5 panel shows 6 joints, since the grid's seventh joint row is unpopulated for a 6-DOF arm.}
