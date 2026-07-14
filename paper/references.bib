@@ -1,6 +1,16 @@
 % References for the Kepler-Encoder-V1 Technical Report.
-% NOTE: metadata below (authors in particular) is approximate / placeholder for
-% several entries and should be verified against the source before submission.
+% NOTE (2026-07-14): all previously flagged / placeholder entries have been
+% verified against their arXiv abs pages or DBLP and corrected (see per-entry
+% "Verified against ..." notes). All other cited entries carrying an arXiv id
+% from 2022-2026 (mojito2025, vqvla2025, actioncodec2026, mtsjepa2026,
+% adaptive1dvdae2026, forcevla22026, videoae2601, videoae2604, msdp2025,
+% biosignaltokenizers2025, airoamoma2025, m3jepa2024, jmaefmri2024,
+% spatiotemporal2024, humanoidseveryday2025, agibotworld2025, sparshx2025,
+% utde2022, fusemoe2024, mtan2021, contiformer2024, pixnerd2026) were checked
+% against their abs pages on the same date and found correct as written.
+% Long-standing, widely cited entries (Perceiver family, DETR, Flamingo,
+% I-JEPA, data2vec, DINOv2, Set Transformer, BLIP-2, OpenVLA, RH20T, etc.)
+% were not re-verified in this pass. No entry is marked UNVERIFIED.
 % Cite with \citep{key} (parenthetical) or \citet{key} (textual).
 
 %% ---------------------------------------------------------------------------
@@ -11,9 +21,10 @@
   title        = {{LeJEPA}: Provable and Scalable Self-Supervised Learning
                   Without the Heuristics},
   author       = {Balestriero, Randall and LeCun, Yann},
-  journal      = {arXiv preprint},
+  journal      = {arXiv preprint arXiv:2511.08544},
   year         = {2025},
-  note         = {Training architecture used in this work},
+  note         = {Training architecture used in this work. Verified against
+                  arXiv:2511.08544 (2026-07-14)},
 }
 
 @article{lecun2022path,
@@ -151,7 +162,8 @@
   title        = {{RH20T}: A Comprehensive Robotic Dataset for Learning
                   Diverse Skills in One-Shot},
   author       = {Fang, Hao-Shu and Fang, Hongjie and Tang, Zhenyu and Liu,
-                  Jirong and Wang, Junbo and Zhu, Haoyi and Lu, Cewu},
+                  Jirong and Wang, Chenxi and Wang, Junbo and Zhu, Haoyi and
+                  Lu, Cewu},
   journal      = {arXiv preprint arXiv:2307.00595},
   year         = {2023},
 }
@@ -188,12 +200,14 @@
   year         = {2026},
 }
 
-@inproceedings{rvmae2026,
+@article{rvmae2026,
   title        = {Recurrent Video Masked Autoencoders},
-  author       = {Zoran, Daniel and others},
-  booktitle    = {Proceedings of the IEEE/CVF Conference on Computer Vision
-                  and Pattern Recognition (CVPR)},
-  year         = {2026},
+  author       = {Zoran, Daniel and Parthasarathy, Nikhil and Yang, Yi and
+                  Hudson, Drew A. and Carreira, Joao and Zisserman, Andrew},
+  journal      = {arXiv preprint arXiv:2512.13684},
+  year         = {2025},
+  note         = {Google DeepMind. Verified against arXiv:2512.13684
+                  (2026-07-14); no conference venue listed on the abs page},
 }
 
 %% ---------------------------------------------------------------------------
@@ -250,10 +264,13 @@
 
 @inproceedings{multimodalcompression2022,
   title        = {Learning Based Multi-Modality Image and Video Compression},
-  author       = {Lu, Guo and others},
+  author       = {Lu, Guo and Zhong, Tianxiong and Geng, Jing and Hu, Qiang
+                  and Xu, Dong},
   booktitle    = {Proceedings of the IEEE/CVF Conference on Computer Vision
                   and Pattern Recognition (CVPR)},
+  pages        = {6073--6082},
   year         = {2022},
+  note         = {Verified against DBLP (2026-07-14)},
 }
 
 %% ---------------------------------------------------------------------------
@@ -270,18 +287,23 @@
 @article{fast2025,
   title        = {{FAST}: Efficient Action Tokenization for
                   Vision-Language-Action Models},
-  author       = {Pertsch, Karl and others},
+  author       = {Pertsch, Karl and Stachowicz, Kyle and Ichter, Brian and
+                  Driess, Danny and Nair, Suraj and Vuong, Quan and Mees,
+                  Oier and Finn, Chelsea and Levine, Sergey},
   journal      = {arXiv preprint arXiv:2501.09747},
   year         = {2025},
+  note         = {Verified against arXiv:2501.09747 (2026-07-14)},
 }
 
 
 @article{hpt2024,
   title        = {Scaling Proprioceptive-Visual Learning with Heterogeneous
-                  Pre-trained Transformers ({HPT})},
-  author       = {Wang, Lirui and others},
+                  Pre-trained Transformers},
+  author       = {Wang, Lirui and Chen, Xinlei and Zhao, Jialiang and He,
+                  Kaiming},
   journal      = {arXiv preprint arXiv:2409.20537},
   year         = {2024},
+  note         = {HPT. Verified against arXiv:2409.20537 (2026-07-14)},
 }
 
 %% ---------------------------------------------------------------------------
@@ -361,9 +383,11 @@
 
 @article{coper2022,
   title        = {{COPER}: Continuous Patient State Perceiver},
-  author       = {Chan, Jason and Deo, Rahul C. and others},
+  author       = {Chauhan, Vinod Kumar and Thakur, Anshul and O'Donoghue,
+                  Odhran and Clifton, David A.},
   journal      = {arXiv preprint arXiv:2208.03196},
   year         = {2022},
+  note         = {Verified against arXiv:2208.03196 (2026-07-14)},
 }
 
 @article{fusemoe2024,
@@ -399,9 +423,14 @@
 @article{vjepa22025,
   title        = {{V-JEPA 2}: Self-Supervised Video Models Enable
                   Understanding, Prediction and Planning},
-  author       = {V-JEPA 2 Team},
+  author       = {Assran, Mido and Bardes, Adrien and Fan, David and Garrido,
+                  Quentin and Howes, Russell and Komeili, Mojtaba and Muckley,
+                  Matthew and Rizvi, Ammar and Roberts, Claire and Sinha,
+                  Koustuv and others},
   journal      = {arXiv preprint arXiv:2506.09985},
   year         = {2025},
+  note         = {Meta FAIR; ~30 authors, full list on the arXiv page.
+                  Verified against arXiv:2506.09985 (2026-07-14)},
 }
 
 @article{data2vec2022,
@@ -468,10 +497,14 @@
 @article{sparsh2024,
   title        = {{Sparsh}: Self-Supervised Touch Representations for
                   Vision-Based Tactile Sensing},
-  author       = {Higuera, Carolina and Sharma, Akash and Kuppuswamy, Naveen
-                  and Paulino, Pedro and others},
+  author       = {Higuera, Carolina and Sharma, Akash and Bodduluri,
+                  Chaithanya Krishna and Fan, Taosha and Lancaster, Patrick
+                  and Kalakrishnan, Mrinal and Kaess, Michael and Boots,
+                  Byron and Lambeta, Mike and Wu, Tingfan and Mukadam,
+                  Mustafa},
   journal      = {arXiv preprint arXiv:2410.24090},
   year         = {2024},
+  note         = {Verified against arXiv:2410.24090 (2026-07-14)},
 }
 
 @article{sparshx2025,
@@ -492,11 +525,17 @@
 }
 
 @article{flare2025,
-  title        = {{FLARE}: Robot Learning with Implicit World Modeling via
-                  Future Latent Representation Alignment},
-  author       = {FLARE Authors (NVIDIA GEAR)},
+  title        = {{FLARE}: Robot Learning with Implicit World Modeling},
+  author       = {Zheng, Ruijie and Wang, Jing and Reed, Scott and Bjorck,
+                  Johan and Fang, Yu and Hu, Fengyuan and Jang, Joel and
+                  Kundalia, Kaushil and Lin, Zongyu and Magne, Loic and
+                  Narayan, Avnish and Tan, You Liang and Wang, Guanzhi and
+                  Wang, Qi and Xiang, Jiannan and Xu, Yinzhen and Ye,
+                  Seonghyeon and Kautz, Jan and Huang, Furong and Zhu, Yuke
+                  and Fan, Linxi},
   journal      = {arXiv preprint arXiv:2505.15659},
   year         = {2025},
+  note         = {Verified against arXiv:2505.15659 (2026-07-14)},
 }
 
 %% ---------------------------------------------------------------------------
@@ -512,13 +551,6 @@
   year         = {2023},
 }
 
-@inproceedings{alignuniform2020,
-  title        = {Understanding Contrastive Representation Learning through
-                  Alignment and Uniformity on the Hypersphere},
-  author       = {Wang, Tongzhou and Isola, Phillip},
-  booktitle    = {International Conference on Machine Learning (ICML)},
-  year         = {2020},
-}
 
 @inproceedings{tcn2018,
   title        = {Time-Contrastive Networks: Self-Supervised Learning from
@@ -539,6 +571,7 @@
   booktitle    = {Proceedings of the IEEE/CVF Conference on Computer Vision
                   and Pattern Recognition (CVPR)},
   year         = {2019},
+  pages        = {5745--5753},
 }
 
 @article{dinov2_2023,
@@ -568,8 +601,7 @@
                   and Bojanowski, Piotr},
   journal      = {arXiv preprint arXiv:2309.16588},
   year         = {2023},
-  note         = {UNVERIFIED citation, confirm before camera-ready; cited for
-                  register-token / attention-sink behavior},
+  note         = {Cited for register-token / attention-sink behavior},
 }
 
 @article{pixnerd2026,
@@ -583,7 +615,32 @@
 
 @article{sensorfm2026,
   title   = {Towards a General Intelligence and Interface for Wearable Health Data},
-  author  = {Narayanswamy, Girish and Xu, Maxwell A. and Heydari, A. Ali and Abdel-Ghaffar, Samy and Guerard, Marius and Spathis, Dimitris and Liu, Xin and McDuff, Daniel and others},
+  author  = {Narayanswamy, Girish and Xu, Maxwell A. and Heydari, A. Ali and
+             Abdel-Ghaffar, Samy and Guerard, Marius and Vaillancourt, Kara
+             and Zhang, Zhihan and Garrison, Jake and others},
   journal = {arXiv preprint arXiv:2605.22759},
-  year    = {2026}
+  year    = {2026},
+  note    = {41 authors, full list on the arXiv page. Verified against
+             arXiv:2605.22759 (2026-07-14). Caution: the paper does not name
+             its model ``SensorFM''; the running text should not use that
+             name for this citation},
+}
+
+@article{jepamsac2026,
+  title        = {{JEPA-MSAC}: A Joint-Embedding Predictive Architecture for
+                  Multimodal Sensing-Assisted Communications},
+  author       = {Zheng, Can and He, Jiguang and Cai, Guofa and Li, Nannan and
+                  Bennis, Mehdi and Wymeersch, Henk and Debbah, Merouane},
+  journal      = {arXiv preprint arXiv:2603.29796},
+  year         = {2026},
+  note         = {Verified against arXiv:2603.29796 (2026-07-14)},
+}
+
+@inproceedings{wangisola2020,
+  title        = {Understanding Contrastive Representation Learning through
+                  Alignment and Uniformity on the Hypersphere},
+  author       = {Wang, Tongzhou and Isola, Phillip},
+  booktitle    = {International Conference on Machine Learning (ICML)},
+  year         = {2020},
+  pages        = {9929--9939},
 }
