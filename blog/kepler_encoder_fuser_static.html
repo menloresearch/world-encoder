@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kepler-Encoder-v0.1 Cross-Attention Fuser</title>
+<style>
+  :root{
+    --ink:#14171a;
+    --muted:#8b939c;
+    --faint:#aeb6be;
+    --line:#dce1e6;
+    --bg:#ffffff;
+    --panel:#fbfcfd;
+    --vision:#6f92b8;   /* desaturated blue  */
+    --motor:#5f9e8f;    /* desaturated teal  */
+    --ee:#c0895c;       /* desaturated orange*/
+    --latent:#8a7bbf;   /* desaturated violet*/
+    --flow:#9aa2ab;     /* neutral flow      */
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg)}
+  .fig{
+    max-width:1160px;margin:0 auto;padding:28px 24px 20px;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+    color:var(--ink);
+  }
+  .eyebrow{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:600;margin-bottom:6px;}
+  .fig h1{font-size:19px;font-weight:600;letter-spacing:-.01em;margin:0 0 2px;}
+  .fig .sub{font-size:13px;color:var(--muted);margin:0 0 14px;line-height:1.5}
+  svg{display:block;width:100%;height:auto}
+  .cap{font-size:12.5px;color:var(--muted);line-height:1.55;margin-top:12px;border-top:1px solid var(--line);padding-top:12px;}
+  .cap b{color:var(--ink);font-weight:600}
+  .lbl{font:600 12px -apple-system,Helvetica,Arial,sans-serif;fill:var(--ink)}
+  .lbl-sm{font:500 10.5px -apple-system,Helvetica,Arial,sans-serif;fill:var(--muted)}
+  .lbl-cap{font:600 10px -apple-system,Helvetica,Arial,sans-serif;fill:var(--muted);letter-spacing:.12em}
+  .mono{font:600 11px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;fill:var(--ink)}
+  .mono-sm{font:500 10px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;fill:var(--muted)}
+  .zlbl{font:600 15px -apple-system,Helvetica,Arial,sans-serif;fill:#fff}
+
+  @keyframes breathe{0%,100%{opacity:.28}50%{opacity:.8}}
+  @keyframes zpulse{0%,100%{transform:scale(1);opacity:.92}50%{transform:scale(1.05);opacity:1}}
+  .zcore{transform-origin:center;transform-box:fill-box;animation:zpulse 3.6s ease-in-out infinite}
+  /* row-sweep keyframes injected by script (pixel-exact) */
+  @media (prefers-reduced-motion: reduce){
+    .zcore,.flowdot,.sweep,.breathe{animation:none !important}
+    .sweep{opacity:.5 !important}
+  }
+  /* static export: all motion off */
+  .zcore,.pulse,.breathe,.sweep,.tick,.flowdot{animation:none !important}
+  .flowdot,.sweep{display:none !important}
+</style>
+</head>
+<body>
+<div class="fig">
+  <div class="eyebrow">Kepler-Encoder-v0.1 · MMPerceiver fuser</div>
+  <h1>Only 8 queries, so the attention matrix is a thin 8&times;217 band, not a 217&times;217 square</h1>
+  <p class="sub">Self-attention over the tokens would score every token against every token, a full 217&times;217 square. Here 8 learned queries score against the 217 keys, so the matrix collapses to 8 rows. The block reads all tokens but keeps only 8 outputs.</p>
+
+  <svg id="dia" viewBox="0 0 1160 560" role="img"
+       aria-label="Cross-attention as a matrix multiply. Q is 8 by 256, K transpose is 256 by 217, and their product A is an 8 by 217 attention matrix, a thin wide band rather than the 217 by 217 square that self-attention would produce. A times V, where V is 217 by 256, gives an 8 by 256 output, one vector per query, which is mean-pooled to a 256-dimensional latent z.">
+    <defs>
+      <marker id="arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="var(--faint)"/>
+      </marker>
+      <radialGradient id="zg" cx="50%" cy="45%" r="60%">
+        <stop offset="0%" stop-color="#a99ede"/><stop offset="100%" stop-color="var(--latent)"/>
+      </radialGradient>
+    </defs>
+
+    <text class="lbl-cap" x="24"  y="26">CONTEXT · 217 TOKENS</text>
+    <text class="lbl-cap" x="300" y="26">SCORES · A = Q·Kᵀ</text>
+    <text class="lbl-cap" x="792" y="26">AGGREGATE · A·V</text>
+    <text class="lbl-cap" x="1044" y="26" text-anchor="middle">LATENT</text>
+
+    <g id="stage"></g>
+  </svg>
+
+  <p class="cap">
+    <b>How to read it.</b> The 217 context tokens (196 vision, 8 proprioception, 13 end-effector, width d = 256) are projected once into
+    <b>keys</b> and <b>values</b>. The scores are a matrix multiply, <b>Q&#8202;(8&times;256) &middot; K&#7488;&#8202;(256&times;217) = A&#8202;(8&times;217)</b>. Because there are only
+    <b>8 queries</b>, A is a <b>thin band of 8 rows</b>, not the <b>217&times;217 square</b> that self-attention over the same tokens would build (the dashed outline).
+    Each row still spans all 217 tokens (the sweep). Then <b>A&#8202;(8&times;217) &middot; V&#8202;(217&times;256) = O&#8202;(8&times;256)</b> returns one vector per query, so the token
+    count drops out. Cost is <b>O(N&#8202;M)</b> rather than O(M&#178;). The block repeats twice, then the 8 rows are <b>mean-pooled</b> into <b>z &isin; &#8477;&#178;&#8309;&#8310;</b>.
+  </p>
+</div>
+
+<script>
+(function(){
+  const NS="http://www.w3.org/2000/svg";
+  const stage=document.getElementById("stage");
+  const mk=(t,a={})=>{const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);return e;};
+  const add=(t,a)=>{const e=mk(t,a);stage.appendChild(e);return e;};
+  const txt=(x,y,s,cls,extra)=>{const e=add("text",Object.assign({x:x,y:y,class:cls||"lbl-sm"},extra||{}));e.textContent=s;return e;};
+  const COL={vision:"var(--vision)",motor:"var(--motor)",ee:"var(--ee)"};
+  const QN=8;
+
+  // ---------- geometry ----------
+  const ctxX=40, ctxW=20, ctxTop=96, ctxBot=430;
+  // scores matmul  Q(8x256) . Kt(256x217) = A(8x217)
+  const Ax=368, Ay=156, Aw=356, Ah=84, ACOLS=34, arowH=Ah/QN;
+  const Qw=78, Qx=Ax-16-Qw, QCOLS=8;
+  const Kh=54, Kx=Ax, Ky=Ay-18-Kh, KROWS=6;
+  // aggregate matmul A(8x217) . V(217x256) = O(8x256)
+  const Ox=812, Oy=Ay, Ow=78, OCOLS=8;
+  const Vh=66, Vx=Ox, Vy=Ay-18-Vh, VROWS=18;
+  const zX=1044, zY=Ay+Ah/2, zR=30;
+
+  const rowCy=i=>Ay+arowH/2+i*arowH;
+  // color helpers (token dimension carries modality color)
+  const col34=j=> j<31?COL.vision:(j<32?COL.motor:COL.ee);   // 217 tokens across 34 ticks
+  const row18=i=> i<16?COL.vision:(i<17?COL.motor:COL.ee);   // 217 tokens across 18 ticks
+
+  // ---------- generic grid block ----------
+  function block(x,y,w,h,cols,rows,cellColor,base){
+    add("rect",{x:x-2,y:y-2,width:w+4,height:h+4,rx:5,fill:"var(--panel)",stroke:"var(--line)"});
+    const cw=w/cols, rh=h/rows;
+    for(let r=0;r<rows;r++)for(let c=0;c<cols;c++){
+      add("rect",{x:x+c*cw+0.5,y:y+r*rh+0.5,width:Math.max(1,cw-1),height:Math.max(1,rh-1),rx:1,
+        fill:cellColor(c,r),opacity:(base(c,r)).toFixed(3)});
+    }
+  }
+  const flat=col=>()=>col, rnd=(a,b)=>()=>(a+Math.random()*(b-a));
+
+  // ---------- 1. CONTEXT ----------
+  const cSeg=[{n:38,c:COL.vision,tag:"196 vision"},{n:2,c:COL.motor,tag:"8 motor"},{n:3,c:COL.ee,tag:"13 ee"}];
+  const cRows=cSeg.reduce((a,s)=>a+s.n,0), cH=(ctxBot-ctxTop)/cRows;
+  add("rect",{x:ctxX-6,y:ctxTop-6,width:ctxW+12,height:(ctxBot-ctxTop)+12,rx:6,fill:"var(--panel)",stroke:"var(--line)"});
+  let cy=ctxTop;
+  cSeg.forEach(seg=>{
+    for(let i=0;i<seg.n;i++){const yy=cy+i*cH;const r=add("rect",{x:ctxX,y:yy+0.5,width:ctxW,height:Math.max(1.4,cH-1.3),rx:1,fill:seg.c,opacity:.5,class:"breathe"});r.style.animation=`breathe 4s ease-in-out ${((yy%40)*0.03).toFixed(2)}s infinite`;}
+    txt(ctxX+ctxW+8,cy+seg.n*cH/2+3.5,seg.tag,"lbl-sm",{fill:seg.c});
+    cy+=seg.n*cH;
+  });
+  txt(ctxX-6,ctxBot+20,"C ∈ ℝ²¹⁷ˣ²⁵⁶","mono-sm");
+  txt(ctxX-6,ctxBot+34,"projected once → K, V","lbl-sm");
+
+  // context -> Kt and context -> V  (two projections of the same tokens)
+  add("path",{d:`M${ctxX+ctxW+8},${ctxTop+60} C${ctxX+130},${ctxTop+20} ${Kx-70},${Ky+Kh/2} ${Kx-4},${Ky+Kh/2}`,fill:"none",stroke:"var(--line)","stroke-width":1.4,"marker-end":"url(#arrow)"});
+  add("path",{d:`M${ctxX+ctxW+8},${ctxBot-60} C${ctxX+160},${ctxBot} ${Vx-90},${Vy+Vh+30} ${Vx-4},${Vy+Vh/2}`,fill:"none",stroke:"var(--line)","stroke-width":1.4,"marker-end":"url(#arrow)"});
+  txt((ctxX+ctxW+Kx)/2-30,ctxTop+14,"project","lbl-sm",{"text-anchor":"middle"});
+
+  // ---------- 2. SCORES : Q . Kt = A ----------
+  // Kt on top  (256 x 217) : rows = d, cols = tokens
+  block(Kx,Ky,Aw,Kh,ACOLS,KROWS,(c,r)=>col34(c),(c,r)=>0.28+Math.random()*0.3);
+  txt(Kx-10,Ky+Kh/2-18,"Kᵀ","mono",{"text-anchor":"end"});
+  txt(Kx+Aw/2,Ky-8,"256 × 217   (keys, transposed)","mono-sm",{"text-anchor":"middle"});
+  // Q on left (8 x 256) : rows = queries, cols = d
+  block(Qx,Ay,Qw,Ah,QCOLS,QN,()=>"var(--latent)",()=>0.25+Math.random()*0.5);
+  txt(Qx+Qw/2,Ay-8,"Q","mono",{"text-anchor":"middle"});
+  txt(Qx+Qw/2,Ay+Ah+16,"8 × 256","mono-sm",{"text-anchor":"middle"});
+  txt(Qx+Qw/2,Ay+Ah+30,"8 learned queries","lbl-sm",{"text-anchor":"middle"});
+
+  // dashed 217x217 self-attention square (what self-attention WOULD build), same width as A
+  const sqBot=Ay+Aw;                       // square: width Aw, height Aw (true square)
+  add("rect",{x:Ax-2,y:Ay-2,width:Aw+4,height:Aw+4,rx:5,fill:"none",stroke:"var(--faint)","stroke-width":1.2,"stroke-dasharray":"4 4",opacity:.9});
+  txt(Ax+Aw/2,sqBot+16,"self-attention would fill this 217 × 217 square","lbl-sm",{"text-anchor":"middle",fill:"var(--faint)"});
+  txt(Ax+Aw+10,Ay+Aw/2,"217 rows","lbl-sm",{fill:"var(--faint)"});
+
+  // A : the thin 8x217 band sitting at the top of that square
+  const peaks=[];
+  block(Ax,Ay,Aw,Ah,ACOLS,QN,()=>"var(--ink)",(c,r)=>{
+    if(peaks[r]===undefined)peaks[r]=2+Math.floor(Math.random()*(ACOLS-4));
+    const d=Math.abs(c-peaks[r]); return Math.min(0.62,0.5*Math.exp(-d*d/8)+0.05+Math.random()*0.05);
+  });
+  txt(Ax+Aw/2,44,"A = softmax(Q·Kᵀ / √d)","mono",{"text-anchor":"middle"});
+  txt(Ax+Aw+10,Ay+Ah/2+20,"8 × 217","mono",{fill:"var(--ink)"});
+  txt(Ax+Aw+10,Ay+Ah/2+34,"thin: 8 ≪ 217","lbl-sm",{fill:"var(--muted)"});
+
+  // arrows Q->A , Kt->A
+  add("path",{d:`M${Qx+Qw+2},${Ay+Ah/2} L${Ax-3},${Ay+Ah/2}`,fill:"none",stroke:"var(--line)","stroke-width":1,"marker-end":"url(#arrow)"});
+  add("path",{d:`M${Kx+Aw/2},${Ky+Kh+2} L${Ax+Aw/2},${Ay-3}`,fill:"none",stroke:"var(--line)","stroke-width":1,"marker-end":"url(#arrow)"});
+
+  // ---------- 3. AGGREGATE : A . V = O ----------
+  // V on top of O  (217 x 256) : rows = tokens, cols = d
+  block(Vx,Vy,Ow,Vh,VROWS==0?1:8,VROWS,(c,r)=>row18(r),(c,r)=>0.3+Math.random()*0.3);
+  txt(Vx+Ow/2,Vy-8,"V","mono",{"text-anchor":"middle"});
+  txt(Vx+Ow/2,Vy-22,"217 × 256   (values)","mono-sm",{"text-anchor":"middle"});
+  // O output (8 x 256) : rows = queries, cols = d  (same latent glyph family as Q)
+  block(Ox,Oy,Ow,Ah,OCOLS,QN,()=>"var(--latent)",()=>0.28+Math.random()*0.5);
+  txt(Ox+Ow/2,Oy+Ah+16,"O = A·V","mono",{"text-anchor":"middle"});
+  txt(Ox+Ow/2,Oy+Ah+30,"8 × 256  ·  8 rows kept","lbl-sm",{"text-anchor":"middle"});
+  txt(Ox+Ow/2,Oy+Ah+44,"× 2 blocks","lbl-sm",{"text-anchor":"middle"});
+
+  // arrows A->O (shared 217) and V->O
+  add("path",{d:`M${Ax+Aw+2},${Ay+Ah/2} C${Ax+Aw+40},${Ay+Ah/2} ${Ox-40},${Oy+Ah/2} ${Ox-3},${Oy+Ah/2}`,fill:"none",stroke:"var(--line)","stroke-width":1.2,"marker-end":"url(#arrow)"});
+  txt((Ax+Aw+Ox)/2,Ay+Ah/2-8,"contract 217","lbl-sm",{"text-anchor":"middle",fill:"var(--muted)"});
+  add("path",{d:`M${Vx+Ow/2},${Vy+Vh+2} L${Ox+Ow/2},${Oy-3}`,fill:"none",stroke:"var(--line)","stroke-width":1,"marker-end":"url(#arrow)"});
+
+  // ---------- 4. LATENT z (mean-pool over 8 rows) ----------
+  for(let i=0;i<QN;i++){const y=rowCy(i);add("path",{d:`M${Ox+Ow+2},${y} C${Ox+Ow+44},${y} ${zX-54},${zY} ${zX-zR-2},${zY}`,fill:"none",stroke:"var(--line)","stroke-width":1});}
+  add("circle",{class:"zcore",cx:zX,cy:zY,r:zR,fill:"url(#zg)",stroke:"var(--latent)","stroke-width":1.5});
+  txt(zX,zY-2,"z","zlbl",{"text-anchor":"middle"});
+  add("text",{x:zX,y:zY+13,"text-anchor":"middle",fill:"#fff",font:"600 10px sans-serif"}).textContent="ℝ²⁵⁶";
+  txt(zX,zY+zR+18,"mean-pool 8","lbl-sm",{"text-anchor":"middle"});
+  txt(zX,zY+zR+32,"O(N·M)","lbl-sm",{"text-anchor":"middle"});
+
+  // ---------- row sweep : query i reads across all tokens ----------
+  const st=document.createElement("style");let kf="@keyframes rowsweep{";
+  for(let i=0;i<QN;i++){const p0=(i/QN*100).toFixed(2),p1=((i+0.85)/QN*100).toFixed(2),y=(i*arowH).toFixed(2);kf+=`${p0}%{transform:translateY(${y}px)}${p1}%{transform:translateY(${y}px)}`;}
+  kf+="100%{transform:translateY(0px)}}";st.textContent=kf;document.head.appendChild(st);
+  [[Qx,Qw],[Ax,Aw],[Ox,Ow]].forEach(([x,w])=>{
+    const s=add("rect",{class:"sweep",x:x-2,y:Ay,width:w+4,height:arowH,rx:2,fill:"none",stroke:"var(--latent)","stroke-width":1.8});
+    s.style.animation=`rowsweep ${QN*0.85}s steps(1,end) infinite`;
+  });
+
+  // ---------- flow dots ----------
+  function dot(color,r){return mk("circle",{r:r||2.2,fill:color,class:"flowdot",opacity:.85});}
+  function motion(el,path,dur,delay){el.appendChild(mk("animateMotion",{dur:dur+"s",begin:delay+"s",repeatCount:"indefinite",path:path,calcMode:"linear"}));}
+  // context -> Kt
+  for(let i=0;i<7;i++){const d=dot(cSeg[Math.floor(Math.random()*3)].c);motion(d,`M${ctxX+ctxW+8},${ctxTop+60} C${ctxX+130},${ctxTop+20} ${Kx-70},${Ky+Kh/2} ${Kx-4},${Ky+Kh/2}`,(2.2+Math.random()*1.3).toFixed(2),(Math.random()*3).toFixed(2));stage.appendChild(d);}
+  // context -> V
+  for(let i=0;i<7;i++){const d=dot(cSeg[Math.floor(Math.random()*3)].c);motion(d,`M${ctxX+ctxW+8},${ctxBot-60} C${ctxX+160},${ctxBot} ${Vx-90},${Vy+Vh+30} ${Vx-4},${Vy+Vh/2}`,(2.2+Math.random()*1.3).toFixed(2),(Math.random()*3).toFixed(2));stage.appendChild(d);}
+  // along each A row (read across tokens)
+  for(let i=0;i<QN;i++){for(let k=0;k<2;k++){const y=rowCy(i);const d=dot("var(--flow)",1.8);motion(d,`M${Ax+3},${y} L${Ax+Aw-3},${y}`,(2.6+Math.random()*1.2).toFixed(2),(Math.random()*3).toFixed(2));stage.appendChild(d);}}
+  // O -> z
+  for(let i=0;i<8;i++){const y=rowCy(Math.floor(Math.random()*QN));const d=dot("var(--latent)",2.3);motion(d,`M${Ox+Ow+2},${y} C${Ox+Ow+44},${y} ${zX-54},${zY} ${zX-zR-2},${zY}`,(1.9+Math.random()*1.0).toFixed(2),(Math.random()*2).toFixed(2));stage.appendChild(d);}
+})();
+</script>
+</body>
+</html>
