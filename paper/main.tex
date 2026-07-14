@@ -677,7 +677,7 @@ Beyond probes, we ask what the \emph{frozen} encoder is directly useful for, wit
 \begin{figure}[!htbp]
   \centering
   \includegraphics[width=\linewidth]{state_decode_ridge.pdf}
-  \caption{Joint angles decoded from the frozen vision-only $z_v$ by the standard ridge probe (seed 0), predicted vs.\ actual on each robot's held-out rows, all joints overlaid (300 points per joint; angles recovered via $\mathrm{atan2}$ from the predicted $\sin$/$\cos$ channels). Panel titles give each robot's overall motor $R^2$. The ur5 panel shows 6 joints because its seventh joint's channels are masked in the corpus.}
+  \caption{Joint angles decoded from the frozen vision-only $z_v$ by the standard ridge probe (seed 0), predicted vs.\ actual on each robot's held-out rows, all joints overlaid (300 points per joint; angles recovered via $\mathrm{atan2}$ from the predicted $\sin$/$\cos$ channels). Panel titles give each robot's overall motor $R^2$. The legend is shared across panels; its joint-7 entry applies only to the 7-DOF flexiv and kuka panels, while the ur5 panel shows 6 joints, since the grid's seventh joint row is unpopulated for a 6-DOF arm.}
   \label{fig:statedecode}
 \end{figure}
 
