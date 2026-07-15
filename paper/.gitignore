@@ -12,3 +12,6 @@
 *.nav
 *.snm
 *.vrb
+
+# arXiv submission bundle produced by build.sh
+arxiv_submission.zip
