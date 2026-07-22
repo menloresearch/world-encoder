@@ -1,5 +1,0 @@
-{
-  // Render the compiled PDF in your local web browser via LaTeX Workshop's
-  // forwarded port (reliable over Remote-SSH / remote workspaces).
-  "latex-workshop.view.pdf.viewer": "browser"
-}
