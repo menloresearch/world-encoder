@@ -4,19 +4,22 @@ Rewritten 2026-07-06 after the weekend's work landed on `user/jiaqi` (see DATA.m
 METRICS.md there). Supersedes the 2026-07-03 PLAN (kept in git history). Results in
 [EXPERIMENTS.md](v0.1/EXPERIMENTS.md); data in [DATA.md](DATA.md).
 
-## Current status (2026-07-21)
+## Current status (2026-07-22)
 
-**The full plan-vs-actual narrative now lives in [STORY.md](STORY.md)** — read that first to orient.
+*(Plan-vs-actual history: see [Timeline](#timeline--plan-vs-actual-the-pivots) below — STORY.md was
+folded in here 07-22, full narrative in git history.)*
 Roadmap-level: **Phase 1 DONE + PUBLISHED** (one-encoder-for-all holds, force = the clean cross-modal
 win; [EXPERIMENTS.md](v0.1/EXPERIMENTS.md)). **Phase 2 temporal-in-encoder RETIRED** (NH1 gate failed twice;
 [results/temporal/RESULTS.md](v0.2/results/temporal/RESULTS.md); full design + saga in git history —
 `TEMPORAL_ARCH.md`/`TEMPORAL_JOURNAL.md`, removed 07-21, `git show 8432258:<file>`). **v0.2 re-scoped (07-17) and BOTH BUILDS DONE + GREEN (07-19):** multi-cam holds rank AND
 improves force (0.283 vs 0.251); predictor beats carry-forward 28–36%/horizon. Canonical v0.2 doc =
-[V0.2.md](v0.2/V0.2.md) (incl. pending JQ follow-ups: camera-dropout retrain + probes). **N1 downstream is
-LIVE on RoboCasa** ([N1_ROBOCASA.md](v0.2/N1_ROBOCASA.md)): encoder-as-REPLACEMENT is dead (0–12% vs
-baseline 24–32%; probes pinned the cause — no object-detail pressure in the objective) → pivoted to
-the **FLARE-faithful HYBRID row** (frozen latent ADDED to the policy's vision); baseline-vs-hybrid is
-the decision number of the week. Active external leads: **ARM** (edge reference model) and
+[V0.2.md](v0.2/V0.2.md) (incl. pending JQ follow-ups: camera-dropout retrain + probes). **N1 on RoboCasa** ([N1_ROBOCASA.md](v0.2/N1_ROBOCASA.md)): encoder-as-REPLACEMENT is dead (14%/2% vs
+baseline 32% @ep150; probes pinned the cause — no object-detail pressure in the objective) → pivoted to
+the **FLARE-faithful HYBRID row** (frozen latent ADDED to the policy's vision). Hybrid so far shows
+**no lift at matched epochs** (ep100: 24/24 vs baseline 28; ep150: 24 vs 32; s1 flat ep100→200);
+missing before concluding: baseline-s1 curve + hybrid-s0 ep150. **Fleet DOWN since 07-21 23:39
+(disk-full killed all runs; ckpts safe on NAS; resume points s1 ep200 / s0 ep100 / baseline-s1 ep50)
+— relaunch pending.** Active external leads: **ARM** (edge reference model) and
 **FLARE/GR00T** (encoder as g(·), §External).
 
 | stage | proves | status |
@@ -24,9 +27,37 @@ the decision number of the week. Active external leads: **ARM** (edge reference 
 | Stage 0–2 + Phase 1 matrix | one encoder for all robots (single-timestep) | ✅ DONE + published |
 | Downstream (surprise · state/pixel decode) | the encoder is *useful* on the frozen model | ✅ DONE |
 | Phase 2 (v0.2) — re-scoped | per-frame multi-cam encoder + time-in-predictor | ✅ both builds DONE + GREEN (07-19); JQ follow-ups pending ([V0.2.md](v0.2/V0.2.md)) |
-| N1 downstream (RoboCasa) | the latent helps a *policy* (task success) | 🔴 replacement arms FAIL → 🔁 HYBRID row training; decision number ~07-21 pm |
+| N1 downstream (RoboCasa) | the latent helps a *policy* (task success) | 🔴 replacement FAIL (gate closed) → 🔁 HYBRID: no lift at matched epochs yet; fleet down (disk-full), resume pending |
 | Phase 3 — Decoder (video) | shows what the latent knows | ✅ pipeline done (PixNerd) |
 | Loss #4 (action-cond.) · Audio · FLARE g(·) · ARM | causality / modalities / external | ⏸️ N2 unparks on RoboCasa commanded actions; ARM/FLARE external |
+
+## Timeline — plan vs actual (the pivots)
+
+- **…→07-07 — v0.1 bet WORKS:** one multimodal JEPA encoder across all RH20T robots; gate passed
+  (5-seed matrix; force = the clean cross-modal win) → paper published ([v0.1/](v0.1/EXPERIMENTS.md)).
+  ARM + GEAR/FLARE external leads born here.
+- **07-15→17 — temporal-in-encoder FAILS, RETIRED:** NH1 gate failed twice under two objectives
+  (present-force probe halved 0.10 vs 0.21, RankMe 51 vs 134) — temporal fusion itself dilutes the
+  per-frame signal. Design + saga in git history (`git show 8432258:TEMPORAL_ARCH.md`, `…:TEMPORAL_JOURNAL.md`).
+  The gate did its job: caught in days, before scaling.
+- **07-17 — re-scope → v0.2:** per-frame multi-cam encoder + time in a separate predictor
+  (FLARE/LeWM/RoboTTT all put time outside g(·)). Caveat on record: right for our g()→VLA goal,
+  not a universal law.
+- **07-17→19 — both v0.2 builds GREEN:** predictor beats carry-forward 28–36% at every horizon;
+  multi-cam holds rank AND improves force (0.283 vs 0.251). Action-conditioning adds ~nothing on
+  RH20T (demo actions are endogenous) → N2 world-model parked for commanded actions.
+- **07-21 — composition analyses (JQ):** fused embedding is view-SPECIFIC (1.46×), early > single >
+  late fusion, camera-dropout retrain does NOT deliver ([RESULTS §5d–e](v0.2/results/temporal/RESULTS.md)).
+- **07-19→21 — N1 RoboCasa: replacement dead → HYBRID pivot:** after the [-1,1]/[0,1] norm bug
+  (~10h tainted, restarted), replacement ends 14%/2% vs baseline 32% @ep150 — exactly as the
+  action-readout probes predicted (fuse 0.335 vs 0.413 raw-patch ceiling: a compact latent can't be a
+  policy's only eyes) → HYBRID row (latent ADDED next to vision, the claim FLARE actually supports).
+  Fork: hybrid > baseline ⇒ latent adds info; hybrid ≈ baseline ⇒ pretraining recipe needs
+  object-level pressure (patch recon / DINO-style distillation).
+- **07-21 23:39 — disk-full killed the whole fleet** (relaunched runs wrote 2.4G ckpts locally);
+  **07-22 recovered:** all ckpts moved/verified to NAS + run dirs NAS-symlinked, disk 98→86%, NAS
+  cache purge freed 3.6T. Hybrid s1 curve 32/24/24/24 @ep50–200 = no lift at matched epochs yet
+  ([N1_ROBOCASA.md](v0.2/N1_ROBOCASA.md)).
 
 ## Phase 1, downstream, and the 2026-07 groundwork — DONE (archived)
 
