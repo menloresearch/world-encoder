@@ -19,7 +19,7 @@ number is **baseline-vs-hybrid**.
 - **Plan:** one multimodal JEPA encoder (Perceiver fuse, SIGReg, cross-modal head) over vision +
   robot state, all RH20T robots at once; prove one-encoder-for-all + cross-modal force readout.
 - **What happened:** gate PASSED 2026-07-07 (5-seed full-RH20T matrix). One-encoder holds; **force is
-  the clean cross-modal win**; transfer matrix in [EXPERIMENTS.md](EXPERIMENTS.md). Downstream
+  the clean cross-modal win**; transfer matrix in [EXPERIMENTS.md](v0.1/EXPERIMENTS.md). Downstream
   usefulness (surprise AUROC 0.90, state decode, PixNerd pixel decode) shipped.
 - **Outcome:** paper on `main` ([paper/](paper/)); reviewer answers + OSS cleanup merged (PR #10/#11).
 - **Standing external leads born here:** ARM (edge reference model) and NVIDIA GEAR/FLARE
@@ -36,7 +36,7 @@ number is **baseline-vs-hybrid**.
   masking, time-embed dominance — the temporal *fusion itself* dilutes the per-frame signal
   (a fixed-capacity latent spends its budget summarizing the window instead of nailing the present).
   Full saga: `TEMPORAL_JOURNAL.md` (git history); numbers:
-  [results/temporal/RESULTS.md](results/temporal/RESULTS.md) §1–3.
+  [results/temporal/RESULTS.md](v0.2/results/temporal/RESULTS.md) §1–3.
 - **Why we're confident it's the architecture, not data:** v0.1 wins on the SAME coarse cache.
 - **The gate did its job** — caught the regression in days, before any scaling.
 
@@ -47,18 +47,18 @@ number is **baseline-vs-hybrid**.
   (**Build 2** — time, relocated). Not a retreat: FLARE, LeWM, RoboTTT and JQ's own framing all put
   time *outside* a per-frame g(·). "Fixing v0.2 properly" and "doing FLARE" converge on the same
   artifact. Caveat kept on record: this is right *for our g()→VLA goal*, not a universal law
-  (V-JEPA 2 is spatiotemporal because it IS the rollout model). [V0.2.md](V0.2.md) — the live doc.
+  (V-JEPA 2 is spatiotemporal because it IS the rollout model). [V0.2.md](v0.2/V0.2.md) — the live doc.
 
 ## 4. v0.2 builds — both DONE + GREEN (2026-07-17 → 07-19)
 
 - **Build 2 (predictor) first** (ran on existing caches): beats carry-forward **28–36% at every
   horizon**; pooled ≥ set (superseded a guardrail); action-conditioning gave **no lift** because RH20T
   only records *realized* motion (already in z) — N2 world-model parked until a real commanded-action
-  signal (RoboCasa has one). [RESULTS.md](results/temporal/RESULTS.md) §4–5.
+  signal (RoboCasa has one). [RESULTS.md](v0.2/results/temporal/RESULTS.md) §4–5.
 - **Build 1 (multi-cam, K=4 kuka):** no rank collapse (RankMe 153 vs 136), **force held AND improved
   (0.283 vs 0.251)** — the probe temporal halved — pose 0.717 vs 0.635; same model fed 1 view drops to
   0.132 → views genuinely pay. Caveat: 1-view input is OOD (trained with all 4 present).
-  [RESULTS.md](results/temporal/RESULTS.md) §5c.
+  [RESULTS.md](v0.2/results/temporal/RESULTS.md) §5c.
 
 ## 5. Embedding analyses for JQ (2026-07-21, kanban brain-internal#1)
 
@@ -66,17 +66,17 @@ number is **baseline-vs-hybrid**.
   further apart than cross-instant); **early fusion > single view > late fusion** (JQ's mean-of-v0.1
   baseline loses to a single view on every probe); convergence-with-views measured (1→2→3 views:
   0.476/0.294/0.140, vs cross-moment ~0.30 → single-view is OOD, not just "less info").
-  [RESULTS.md](results/temporal/RESULTS.md) §5d.
+  [RESULTS.md](v0.2/results/temporal/RESULTS.md) §5d.
 - **Agreed follow-ups (pending):** v0.2 single-view-encode+average probe, **camera-dropout retrain**
   (~30 min, 1 GPU), per-camera-singleton breakdown; report distances in units of each model's own
   cross-moment distance; run info-retention probes alongside invariance probes on every retrain.
-  Full spec: [V0.2.md](V0.2.md) Build 1 "JQ follow-ups" bullet.
+  Full spec: [V0.2.md](v0.2/V0.2.md) Build 1 "JQ follow-ups" bullet.
 
 ## 6. N1 downstream — RoboCasa dry run (2026-07-19 → now): replacement dead → HYBRID pivot
 
 - **Plan (JQ's 3-row table):** same Diffusion Policy, swap ONLY the observation encoder — baseline
   ResNet / Kepler e2e (random-init) / Kepler pt-enc (JEPA-pretrained, frozen) — success-vs-epochs on
-  RoboCasa365. De-risks the Molmobot/real-microfactory version. [N1_ROBOCASA.md](N1_ROBOCASA.md).
+  RoboCasa365. De-risks the Molmobot/real-microfactory version. [N1_ROBOCASA.md](v0.2/N1_ROBOCASA.md).
 - **What happened, in order:**
   1. Infra: frame cache (decode-bound → GPU-bound), Kepler encoder arm in the DP fork, **in-domain
      pretraining gate GREEN** (state R² 0.673 vs raw 0.538, RankMe 190).
@@ -115,10 +115,10 @@ number is **baseline-vs-hybrid**.
 | doc | holds |
 |---|---|
 | [PLAN.md](PLAN.md) | roadmap + gates + external leads (ARM, GEAR/FLARE) |
-| [V0.2.md](V0.2.md) | LIVE v0.2: builds 1+2, JQ follow-ups spec |
-| [N1_ROBOCASA.md](N1_ROBOCASA.md) | LIVE downstream: builds, fleet, results table, pivot record |
-| [results/temporal/RESULTS.md](results/temporal/RESULTS.md) | every v0.2-era number (§1–3 temporal failure, §4–5 builds, §5d composition) |
-| [EXPERIMENTS.md](EXPERIMENTS.md) | Phase-1 matrix + v0.1 downstream numbers |
+| [V0.2.md](v0.2/V0.2.md) | LIVE v0.2: builds 1+2, JQ follow-ups spec |
+| [N1_ROBOCASA.md](v0.2/N1_ROBOCASA.md) | LIVE downstream: builds, fleet, results table, pivot record |
+| [results/temporal/RESULTS.md](v0.2/results/temporal/RESULTS.md) | every v0.2-era number (§1–3 temporal failure, §4–5 builds, §5d composition) |
+| [EXPERIMENTS.md](v0.1/EXPERIMENTS.md) | Phase-1 matrix + v0.1 downstream numbers |
 | ~~TEMPORAL_ARCH.md / TEMPORAL_JOURNAL.md~~ | REMOVED 07-21 (retired design / debugging saga) — `git show 8432258:<file>` |
 | [DATA.md](DATA.md) | RH20T layout, rates, traps |
 | this file | the narrative: plan → actual → change, with pointers |
