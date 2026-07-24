@@ -1,0 +1,14 @@
+{
+ "mc_d_to_full_1view": 0.4755801260471344,
+ "mc_d_to_full_2view": 0.29418376088142395,
+ "mc_d_to_full_3view": 0.13968046009540558,
+ "v01mean_d_to_full_1view": 0.26074162125587463,
+ "v01mean_d_to_full_2view": 0.11497385799884796,
+ "v01mean_d_to_full_3view": 0.043047945946455,
+ "mc_d_composition_2view": 0.4413081407546997,
+ "mc_d_cross_instant_2view": 0.3017420768737793,
+ "mc_composition_over_instant": 1.4625343084335327,
+ "v01mean_d_composition_2view": 0.2588579058647156,
+ "v01mean_d_cross_instant_2view": 0.20175199210643768,
+ "v01mean_composition_over_instant": 1.2830500602722168
+}

@@ -1,0 +1,46 @@
+{
+ "v0": "/mnt/nas/data/RH20T/checkpoints/phase1/kuka/seed0.pt",
+ "latent": "pooled",
+ "use_action": true,
+ "cfgs": [
+  6,
+  7
+ ],
+ "ctx": 4,
+ "deltas": [
+  1,
+  2,
+  3
+ ],
+ "n_train": 5376,
+ "n_test": 2355,
+ "predictor_params_M": 1.32352,
+ "sigreg_w": 0.0,
+ "per_delta": {
+  "1": {
+   "pred_r2": 0.2369931936264038,
+   "naive_r2": -0.060436271131038666,
+   "pred_mse": 0.7189580202102661,
+   "carry_mse": 0.9985769391059875,
+   "pred_over_carry_mse": 0.7199825992916875,
+   "rankme_pred": 123.51292226853491
+  },
+  "2": {
+   "pred_r2": 0.163470059633255,
+   "naive_r2": -0.2503364086151123,
+   "pred_mse": 0.8306494355201721,
+   "carry_mse": 1.2405188083648682,
+   "pred_over_carry_mse": 0.6695984211759384,
+   "rankme_pred": 128.4025888377353
+  },
+  "3": {
+   "pred_r2": 0.11809462308883667,
+   "naive_r2": -0.37306803464889526,
+   "pred_mse": 0.8701491951942444,
+   "carry_mse": 1.3535844087600708,
+   "pred_over_carry_mse": 0.6428481220401545,
+   "rankme_pred": 131.7286261802433
+  }
+ },
+ "best_pred_over_carry_mse": 0.6428481220401545
+}

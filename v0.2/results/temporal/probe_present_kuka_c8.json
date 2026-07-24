@@ -1,0 +1,17 @@
+{
+ "v01": 0.21228264272212982,
+ "v02_mean": 0.09972569346427917,
+ "v02_max": 0.07218443602323532,
+ "v02_unpooled": 0.06608260422945023,
+ "raw_floor": -0.047848671674728394,
+ "n_train": 5360,
+ "n_test": 2347,
+ "v1": "/mnt/nas/data/RH20T/checkpoints/temporal/v01/kuka_c8_v01/seed0.pt",
+ "v0": "/mnt/nas/data/RH20T/checkpoints/phase1/kuka/seed0.pt",
+ "cfgs": [
+  6,
+  7
+ ],
+ "window": 8,
+ "stride": 2
+}

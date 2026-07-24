@@ -52,8 +52,8 @@ De-risks the identical Molmobot/real-microfactory version. Sim has NO F/T → th
    symlink made eval_task's `../evals` collide across runs; fixed in eval_one.py/eval_watcher.py.
    And MUJOCO_EGL_DEVICE_ID must pin eval render to the eval GPU.)
 
-## ⚠ 2026-07-22: DISK-FULL KILLED THE FLEET (root fs 100% at 07-21 ~23:39)
-All runs below are DEAD; GPUs 0–7 idle. The 10:43/16:22 relaunches saved ckpts locally (2.4G
+## ⚠ 2026-07-22: DISK-FULL KILLED THE FLEET (root fs 100% at 07-21 ~23:39) — RECOVERED, see 07-24 below
+All runs were DEAD; GPUs 0–7 idle. The 10:43/16:22 relaunches saved ckpts locally (2.4G
 each; only s0's 04:21 dir kept the NAS symlink) and filled the disk. States at death — hybrid s1
 `10.43.21`: ~ep240, latest.ckpt=ep200, ep50–200 eval'd (32/24/24/24%); hybrid s0 `04.21.45`:
 ~ep126, latest=ep100; baseline-s1 `16.22.47`: ~ep50 — its `epoch=0050` ckpt was truncated
@@ -61,7 +61,36 @@ mid-write (deleted; caused watcher2's rc=120 eval loop) but `latest.ckpt` is val
 07-22: all local ckpts moved to NAS `dp_checkpoints/` (zip-verified) + symlinks swapped — every
 run dir is now NAS-symlinked; disk 98%→93% (35G free; the remaining ~366G is root-owned:
 40G Qwen3-VL HF cache in /home/root + /var/lib/docker-infra, VM-admin territory).
-TODO: resume s1 from ep200 / s0 from ep100 / baseline-s1 from latest; re-arm eval_watcher2.
+~~TODO: resume s1 from ep200 / s0 from ep100 / baseline-s1 from latest; re-arm eval_watcher2.~~ DONE.
+
+## 2026-07-24 ~09:40: N1 CLOSED — fleet killed (Ishneet's call), conclusions final
+Curves through ep250 (both hybrids) + baseline s1's full ep400 curve establish everything the
+verdict needs; the ep400 completeness tail was judged not worth the GPU-days. Killed: hybrid s0
+(~ep255), hybrid s1 (~ep255), eval_watcher4. All ckpts through ep250 saved on NAS + eval'd; GPUs
+0–7 idle. Final PnP numbers: baseline s0 24/28/32 (ep50–150), baseline s1 26/40/34/32/32/36/36/34
+(ep50–400), hybrid s0 22/24/26/24/28 (ep50–250), hybrid s1 32/24/24/24/24 (ep50–250).
+**Verdict: replacement falsified (ep-150 gate), hybrid no lift — flat 24-28% vs baseline plateau
+32-36%, both seeds.** Posted to brain-internal#1 (07-24, two comments: full update + conclusion/
+next steps). Next steps decided there: v0.3 objective with object/scene pressure (probes gate:
+close 0.335→0.413 action-readout) → rerun hybrid; true FLARE aux-loss row (future-latent
+alignment, uses the validated predictor); SeeSE3 probes; resampler pre-check.
+
+## 2026-07-24: fleet fully resumed — final data generating (superseded by close-out above)
+Resume states: **baseline s1** (`16.22.47`) resumed 07-23 as DDP-4/GPUs 0–3 (bs 48×4=192 parity),
+**COMPLETE** — trained through ep449 internally (finished 07-24 04:23; last saved+eval'd ckpt = ep400),
+full curve in the CSV. **Hybrid s0** (`04.21.45`) resumed 07-23 DDP-2/GPUs 6+7 (~9.1 min/ep, no z-cache),
+at ep247 as of 07-24 04:30 → ep400 ETA ~07-25 04:00. **Hybrid s1** (`10.43.21`) resumed 07-24 04:37
+(Claude) from ep200 latest.ckpt (zip-verified), original recipe verbatim: DDP-4/GPUs 0–3, bs 48×4,
+seed 1, kepler_z_cache (~3.2 min/ep) → ep400 ETA ~07-24 15:30, log `/tmp/dp_hybrid_s1_resume.log`.
+**Watchers consolidated 07-24:** old tmux `eval_watcher` (still aimed at cuda:6/7 = s0's TRAINING GPUs —
+OOM/contention risk) and the 07-23 watcher killed; single `eval_watcher4` (pid 3701520, log
+`/tmp/eval_watcher4.log`) watches both live hybrid runs on cuda:4+5, same CSV (deduped post-restart, 29 rows).
+**LR-schedule quirk (found 07-24, worth knowing before reading curves):** the fork's cosine schedule
+WRAPS (diffusers-style — lr returns to peak past the horizon) AND each resume restarts the phase:
+baseline s1's lr cycled peak→4e-6(~ep137)→peak(~ep237)→min(~ep337)→rising at ep400; hybrid s0's resume
+restarted its phase at ep100 → lr min ~2e-8 at ep247, climbing back after. So no arm ever trained at a
+cleanly-annealed-to-zero endpoint; late-epoch curve wiggle (baseline s1 32→36→34) is converged-model +
+cyclic-lr noise. Same mess in every arm → matched-epoch comparisons stay fair.
 
 ## Runs — fleet before the crash (as of 2026-07-21 ~06:45, ALL-IN-ON-HYBRID reallocation; tmux on the VM)
 **Reallocation 06:35 (Ishneet's call — "all resources to the hybrid"):** baselines STOPPED (their
@@ -95,27 +124,30 @@ CSV in `world-encoder/results/downstream/`. Restart-safety note for the future: 
 ckpt that already has an `eval_log.json` and re-queues the rest, but it also RE-APPENDS known results
 to the CSV on startup → dedup rows after a restart (`awk '!seen[$0]++'`).
 
-## Results so far (50 rollouts/ckpt, updated 07-22 after the disk-full crash)
+## Results so far (50 rollouts/ckpt, updated 07-24 04:45)
 **PickPlaceCounterToCabinet:**
-| arm | ep 50 | ep 100 | ep 150 | ep 200 |
-|---|---|---|---|---|
-| baseline DP s0 | 24% | 28% | 32% | — (stopped ep176) |
-| baseline DP s1 (`16.22.47`) | (no eval yet — corrupt ep-50 ckpt deleted; state lives in latest.ckpt) | — | — | — |
-| Kepler e2e (post-fix) | 0% | 12% | 14% | — |
-| Kepler pt-enc (post-fix) | 4% | 2% | 2% | — |
-| Kepler HYBRID s0 (`04.21.45`) | 22% | 24% | — (died ep126) | — |
-| Kepler HYBRID s1 (`10.43.21`) | **32%** | 24% | 24% | 24% (died ~ep240) |
+| arm | ep 50 | ep 100 | ep 150 | ep 200 | ep 250 | ep 300 | ep 350 | ep 400 |
+|---|---|---|---|---|---|---|---|---|
+| baseline DP s0 | 24% | 28% | 32% | — (stopped ep176) | | | | |
+| baseline DP s1 (`16.22.47`) | 26% | **40%** | 34% | 32% | 32% | 36% | 36% | 34% |
+| Kepler e2e (post-fix) | 0% | 12% | 14% | — | | | | |
+| Kepler pt-enc (post-fix) | 4% | 2% | 2% | — | | | | |
+| Kepler HYBRID s0 (`04.21.45`) | 22% | 24% | 26% | 24% | (training, ep247 @07-24 04:30) | | | |
+| Kepler HYBRID s1 (`10.43.21`) | 32% | 24% | 24% | 24% | (resumed 07-24 04:37) | | | |
 
 **Ep-150 gate: closed.** Replacement arms end 14% / 2% vs baseline 32% — replacement claim
 falsified on this benchmark, exactly as the action-readout probes predicted. Honest-ablation rows
 complete (3 points/arm for JQ's table).
-**Hybrid read as of 07-22 (still not the final word):** at matched epochs the hybrid shows NO lift —
-ep100: baseline 28% vs hybrid 24%/24% (both seeds); ep150: baseline 32% vs hybrid s1 24%; s1 is FLAT
-at 24% from ep100→ep200 while the baseline was still climbing at ep150. The s1 ep50 = 32% spike is a
-single point contradicted by s0's 22% at the same epoch — treat as ±6-7% noise until baseline s1's
-curve exists. Latent doesn't hurt (unlike replacement) but no evidence it ADDS; if this pattern holds
-with both seeds through ep150, the honest table row for JQ is "hybrid ≈ baseline, no added information."
-Missing before concluding: baseline s1 curve (zero points), hybrid s0 ep150.
+**Hybrid read as of 07-24 (near-final — only hybrid ep250–400 points pending):** with baseline s1's
+full curve in, the picture sharpened from "no lift" to **hybrid consistently BELOW baseline**:
+baseline plateaus at 32–36% (s1 ep150–400; s0 hit 32% at ep150 still climbing) while the hybrid sits
+flat at 24–26% in BOTH seeds across ep100–200 (s0: 24/26/24; s1: 24/24/24). That's a ~8–10-pt gap
+consistent across 2 seeds × 4 matched ckpts — beyond the ±6-7% single-point noise. The s1 ep50 = 32%
+spike stays an outlier (s0 ep50 = 22%). Baseline s1's ep100 = 40% is likewise a single-point spike
+(its own neighbors 26/34). If ep250–400 hybrid points stay ~24-26%, the honest table row for JQ:
+"hybrid ≈ or slightly BELOW baseline — the frozen latent adds no information the ResNet stream
+doesn't already extract, and the extra 256-d input may mildly tax optimization." Worth pairing with
+the §probe story: the latent's action-readout ceiling (0.335) was already under raw patches (0.413).
 
 **OpenDrawer:**
 | arm | ep 50 | ep 100 |

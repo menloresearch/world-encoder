@@ -1,0 +1,9 @@
+{
+ "cfg": 7,
+ "scenes_used": 6,
+ "v0": "/mnt/nas/data/RH20T/checkpoints/phase1/kuka/seed0.pt",
+ "cross_view_dist": 0.6653112300804683,
+ "cross_tick_dist": 0.3352542199815313,
+ "raw_vit_cross_view_dist": 0.14719063895089285,
+ "ratio_view_over_tick": 1.9844977048077705
+}
