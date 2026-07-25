@@ -12,6 +12,13 @@ Loads per-cfg caches written by preprocessing/precompute_chunks.py and serves:
   group_idx  [B]              long  index into dataset.groups = (cfg, task, user)
   ts         [B]              long  tick timestamp (ms) — for Δt-based selection
 
+multicam=True loads the K-camera shard caches from preprocessing/precompute_multicam.py
+(`cfg<N>_mc.shard*.npz`, concatenated in RAM) instead; the packet differs in vision only:
+  rgb        [B, K, 196, 768] f32   dim 1 = CAMERAS (sorted-serial order), not time
+  cam_ids    [B, K]           long  index into dataset.cam_vocab (serial-keyed, stable
+                                    across scenes — cam slot k is NOT the same physical
+                                    camera in every scene, the serial is)
+
 Train/test split is HELD-OUT BY GROUP (cfg, task, user), stratified per cfg: the same
 user repeating the same task up to 10x produces near-duplicate scenes, so scenes are
 not independent — all repetitions land on one side of the split. The assignment is
@@ -23,6 +30,7 @@ later; triplet negatives must be drawn from test groups only.
     train, test, ds = make_loader("/mnt/nas/data/RH20T/caches", cfgs=[1,2,3,4,5,6,7])
 """
 import csv
+import glob
 import os
 import re
 
@@ -39,17 +47,32 @@ def scene_group(scene_name):
 
 
 class ChunkDataset(Dataset):
-    def __init__(self, cache_dir, cfgs=(1, 2, 3, 4, 5, 6, 7)):
+    def __init__(self, cache_dir, cfgs=(1, 2, 3, 4, 5, 6, 7), multicam=False):
         parts = {k: [] for k in
                  ["patch", "motor", "motor_mask", "ee", "ee_mask", "robot_id", "cfg", "ts"]}
-        names = []
+        names, serials = [], []
         for n in cfgs:
-            z = np.load(os.path.join(cache_dir, f"cfg{n}.npz"), allow_pickle=True)
-            for k in parts:
-                parts[k].append(z[k])
-            names.append(z["scene"])
+            if multicam:
+                shards = sorted(glob.glob(os.path.join(cache_dir, f"cfg{n}_mc.shard*.npz")))
+                assert shards, f"no multicam shards for cfg{n} in {cache_dir}"
+            else:
+                shards = [os.path.join(cache_dir, f"cfg{n}.npz")]
+            for p in shards:
+                z = np.load(p, allow_pickle=True)
+                for k in parts:
+                    parts[k].append(z[k])
+                names.append(z["scene"])
+                if multicam:
+                    serials.append(z["cam_serials"])
         self._d = {k: np.concatenate(v) for k, v in parts.items()}
         names = np.concatenate(names)
+
+        self.multicam = multicam
+        if multicam:
+            cam_serials = np.concatenate(serials)                # [N, K] str
+            self.cam_vocab = sorted(set(cam_serials.ravel().tolist()))
+            lut = {s: i for i, s in enumerate(self.cam_vocab)}
+            self._cam_ids = np.vectorize(lut.__getitem__)(cam_serials).astype(np.int64)
 
         self.scenes = sorted(set(names.tolist()))              # scene lookup
         self.groups = sorted({scene_group(s) for s in self.scenes})  # (cfg,task,user) lookup
@@ -63,8 +86,9 @@ class ChunkDataset(Dataset):
 
     def __getitem__(self, i):
         d = self._d
-        return {
-            "rgb": torch.from_numpy(d["patch"][i].astype(np.float32)).unsqueeze(0),
+        rgb = torch.from_numpy(d["patch"][i].astype(np.float32))   # mc: [K,196,768]
+        out = {
+            "rgb": rgb if self.multicam else rgb.unsqueeze(0),     # else [1,196,768]
             "motor": torch.from_numpy(d["motor"][i]),
             "motor_mask": torch.from_numpy(d["motor_mask"][i]),
             "ee": torch.from_numpy(d["ee"][i]),
@@ -75,6 +99,9 @@ class ChunkDataset(Dataset):
             "group_idx": int(self._group_idx[i]),
             "ts": int(d["ts"][i]),
         }
+        if self.multicam:
+            out["cam_ids"] = torch.from_numpy(self._cam_ids[i])
+        return out
 
 
 def load_split(split_csv=SPLIT_CSV):
@@ -84,13 +111,13 @@ def load_split(split_csv=SPLIT_CSV):
 
 
 def make_loader(cache_dir, cfgs=(1, 2, 3, 4, 5, 6, 7), batch=256,
-                split_csv=SPLIT_CSV, num_workers=4):
+                split_csv=SPLIT_CSV, num_workers=4, multicam=False):
     """Train/test DataLoaders (+ the dataset), split by the frozen group CSV.
 
     Every group found in the caches must appear in the CSV — an unknown group is an
     error (regenerate the CSV deliberately via preprocessing/make_split.py, don't
     let new data silently land on either side)."""
-    ds = ChunkDataset(cache_dir, cfgs)
+    ds = ChunkDataset(cache_dir, cfgs, multicam=multicam)
     split = load_split(split_csv)
     unknown = [g for g in ds.groups if g not in split]
     assert not unknown, f"{len(unknown)} groups missing from {split_csv}: {unknown[:5]}"

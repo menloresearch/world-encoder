@@ -31,14 +31,14 @@ class PerceiverFuse(nn.Module):
         self.ffn = nn.ModuleList([_mlp(d, d, 4 * d) for _ in range(depth)])
         self.n2 = nn.ModuleList([nn.LayerNorm(d) for _ in range(depth)])
 
-    def forward(self, context, attn_mask=None):
+    def forward(self, context, attn_mask=None, pool=True):
         # context: [B, T, d] (T = n_patch + 1 = 197); attn_mask: [M, T] bool, True=blocked
         x = self.q.unsqueeze(0).expand(context.shape[0], -1, -1)  # [M, d] -> [B, M, d]
         for ca, n1, ffn, n2 in zip(self.ca, self.n1, self.ffn, self.n2):
             # cross-attn: queries [B, M, d] attend to context [B, T, d] -> [B, M, d]
             x = x + ca(n1(x), context, attn_mask=attn_mask)      # [B, M, d]
             x = x + ffn(n2(x))                                   # [B, M, d]
-        return x.mean(1)  # pool over M queries -> [B, d]
+        return x.mean(1) if pool else x  # pooled [B,d] (default) | latent SET [B,M,d]
 
 
 class MMPerceiver(nn.Module):

@@ -63,6 +63,8 @@ Numbers and figures land in `results/` and `figures/`; the narrative is in
 
 ## Status & contributing
 
-v0.1 — single-timestep, on RH20T. The main next step is native-rate **temporal** fusion (multi-frame,
-per-token timestamps); see [`PLAN.md`](PLAN.md). Issues and PRs are welcome — please keep new results
-reproducible and logged in `EXPERIMENTS.md`.
+v0.1 — single-timestep, on RH20T. v0.2 work in progress: **multi-camera fusion** (per-frame) + a
+**next-embedding predictor** on the frozen encoder (time lives in the predictor, not the encoder —
+the original multi-frame-in-encoder design was tested and retired). The plan-vs-actual narrative is
+in [`STORY.md`](STORY.md); roadmap in [`PLAN.md`](PLAN.md); live v0.2 doc = [`V0.2.md`](V0.2.md).
+Issues and PRs are welcome — please keep new results reproducible and logged in `EXPERIMENTS.md`.

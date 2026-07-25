@@ -4,24 +4,60 @@ Rewritten 2026-07-06 after the weekend's work landed on `user/jiaqi` (see DATA.m
 METRICS.md there). Supersedes the 2026-07-03 PLAN (kept in git history). Results in
 [EXPERIMENTS.md](EXPERIMENTS.md); data in [DATA.md](DATA.md).
 
-## Current status (2026-07-17)
+## Current status (2026-07-22)
 
-**Phase 1 DONE + PUBLISHED** — Kepler-Encoder-v0.1 paper is on `main`; one-encoder-for-all holds,
-force is the clean cross-modal win (full numbers in [EXPERIMENTS.md](EXPERIMENTS.md)). **Downstream**
-(surprise detector, state + pixel decode) DONE. **Phase 2 temporal-in-encoder is RETIRED** — it failed
-its NH1 gate twice (temporal ≤ single-frame v0.1; evidence in [results/temporal/RESULTS.md](results/temporal/RESULTS.md)
-+ [TEMPORAL_ARCH.md](TEMPORAL_ARCH.md) §18/§20). **v0.2 is re-scoped** (2026-07-17) to a per-frame multimodal
-encoder with **time moved OUT of the encoder into a predictor/VLA** (see §Phase 2 below) — the division of
-labor JQ, FLARE, LeWM, and RoboTTT all converge on. Active external leads: **ARM** (edge reference model) and
+*(Plan-vs-actual history: see [Timeline](#timeline--plan-vs-actual-the-pivots) below — STORY.md was
+folded in here 07-22, full narrative in git history.)*
+Roadmap-level: **Phase 1 DONE + PUBLISHED** (one-encoder-for-all holds, force = the clean cross-modal
+win; [EXPERIMENTS.md](EXPERIMENTS.md)). **Phase 2 temporal-in-encoder RETIRED** (NH1 gate failed twice;
+[results/temporal/RESULTS.md](results/temporal/RESULTS.md); full design + saga in git history —
+`TEMPORAL_ARCH.md`/`TEMPORAL_JOURNAL.md`, removed 07-21, `git show 8432258:<file>`). **v0.2 re-scoped (07-17) and BOTH BUILDS DONE + GREEN (07-19):** multi-cam holds rank AND
+improves force (0.283 vs 0.251); predictor beats carry-forward 28–36%/horizon. Canonical v0.2 doc =
+[V0.2.md](V0.2.md) (incl. pending JQ follow-ups: camera-dropout retrain + probes). **N1 on RoboCasa** ([N1_ROBOCASA.md](N1_ROBOCASA.md)): encoder-as-REPLACEMENT is dead (14%/2% vs
+baseline 32% @ep150; probes pinned the cause — no object-detail pressure in the objective) → pivoted to
+the **FLARE-faithful HYBRID row** (frozen latent ADDED to the policy's vision). Hybrid so far shows
+**no lift at matched epochs** (ep100: 24/24 vs baseline 28; ep150: 24 vs 32; s1 flat ep100→200);
+missing before concluding: baseline-s1 curve + hybrid-s0 ep150. **Fleet DOWN since 07-21 23:39
+(disk-full killed all runs; ckpts safe on NAS; resume points s1 ep200 / s0 ep100 / baseline-s1 ep50)
+— relaunch pending.** Active external leads: **ARM** (edge reference model) and
 **FLARE/GR00T** (encoder as g(·), §External).
 
 | stage | proves | status |
 |---|---|---|
 | Stage 0–2 + Phase 1 matrix | one encoder for all robots (single-timestep) | ✅ DONE + published |
 | Downstream (surprise · state/pixel decode) | the encoder is *useful* on the frozen model | ✅ DONE |
-| Phase 2 (v0.2) — re-scoped | per-frame multi-cam encoder + time-in-predictor | 🔁 temporal-in-encoder RETIRED (gate fail ×2); **multi-cam on RH20T next** |
+| Phase 2 (v0.2) — re-scoped | per-frame multi-cam encoder + time-in-predictor | ✅ both builds DONE + GREEN (07-19); JQ follow-ups pending ([V0.2.md](V0.2.md)) |
+| N1 downstream (RoboCasa) | the latent helps a *policy* (task success) | 🔴 replacement FAIL (gate closed) → 🔁 HYBRID: no lift at matched epochs yet; fleet down (disk-full), resume pending |
 | Phase 3 — Decoder (video) | shows what the latent knows | ✅ pipeline done (PixNerd) |
-| Loss #4 (action-cond.) · Audio · FLARE g(·) · ARM | causality / modalities / external | ⏸️ gated / external |
+| Loss #4 (action-cond.) · Audio · FLARE g(·) · ARM | causality / modalities / external | ⏸️ N2 unparks on RoboCasa commanded actions; ARM/FLARE external |
+
+## Timeline — plan vs actual (the pivots)
+
+- **…→07-07 — v0.1 bet WORKS:** one multimodal JEPA encoder across all RH20T robots; gate passed
+  (5-seed matrix; force = the clean cross-modal win) → paper published ([v0.1/](EXPERIMENTS.md)).
+  ARM + GEAR/FLARE external leads born here.
+- **07-15→17 — temporal-in-encoder FAILS, RETIRED:** NH1 gate failed twice under two objectives
+  (present-force probe halved 0.10 vs 0.21, RankMe 51 vs 134) — temporal fusion itself dilutes the
+  per-frame signal. Design + saga in git history (`git show 8432258:TEMPORAL_ARCH.md`, `…:TEMPORAL_JOURNAL.md`).
+  The gate did its job: caught in days, before scaling.
+- **07-17 — re-scope → v0.2:** per-frame multi-cam encoder + time in a separate predictor
+  (FLARE/LeWM/RoboTTT all put time outside g(·)). Caveat on record: right for our g()→VLA goal,
+  not a universal law.
+- **07-17→19 — both v0.2 builds GREEN:** predictor beats carry-forward 28–36% at every horizon;
+  multi-cam holds rank AND improves force (0.283 vs 0.251). Action-conditioning adds ~nothing on
+  RH20T (demo actions are endogenous) → N2 world-model parked for commanded actions.
+- **07-21 — composition analyses (JQ):** fused embedding is view-SPECIFIC (1.46×), early > single >
+  late fusion, camera-dropout retrain does NOT deliver ([RESULTS §5d–e](results/temporal/RESULTS.md)).
+- **07-19→21 — N1 RoboCasa: replacement dead → HYBRID pivot:** after the [-1,1]/[0,1] norm bug
+  (~10h tainted, restarted), replacement ends 14%/2% vs baseline 32% @ep150 — exactly as the
+  action-readout probes predicted (fuse 0.335 vs 0.413 raw-patch ceiling: a compact latent can't be a
+  policy's only eyes) → HYBRID row (latent ADDED next to vision, the claim FLARE actually supports).
+  Fork: hybrid > baseline ⇒ latent adds info; hybrid ≈ baseline ⇒ pretraining recipe needs
+  object-level pressure (patch recon / DINO-style distillation).
+- **07-21 23:39 — disk-full killed the whole fleet** (relaunched runs wrote 2.4G ckpts locally);
+  **07-22 recovered:** all ckpts moved/verified to NAS + run dirs NAS-symlinked, disk 98→86%, NAS
+  cache purge freed 3.6T. Hybrid s1 curve 32/24/24/24 @ep50–200 = no lift at matched epochs yet
+  ([N1_ROBOCASA.md](N1_ROBOCASA.md)).
 
 ## Phase 1, downstream, and the 2026-07 groundwork — DONE (archived)
 
@@ -38,7 +74,7 @@ encoder) — is retired. It failed the NH1 gate under two independent objectives
 → mean-pool fusion degrades the latent (RankMe 51 vs 134; present-force probe halved 0.10 vs 0.21; P3 dq and
 P4 future-force both lose to v0.1 at every horizon). Root cause localized to the temporal *fusion*, not the
 head or the masking (both independently ruled out). Numbers: [results/temporal/RESULTS.md](results/temporal/RESULTS.md);
-full narrative: [TEMPORAL_JOURNAL.md](TEMPORAL_JOURNAL.md); design: [TEMPORAL_ARCH.md](TEMPORAL_ARCH.md) §18/§20.
+full narrative + design: `TEMPORAL_JOURNAL.md` / `TEMPORAL_ARCH.md` §18/§20 (git history, removed 07-21).
 
 **Why this is the right call, not a retreat.** Every path we care about puts time *outside* a per-frame
 encoder: FLARE's g(·) is per-frame (policy does time); LeWM = per-frame encoder + separate next-embedding
@@ -56,14 +92,14 @@ rollout model; ours feeds a VLA that already handles time."
 
 ### The re-scoped path (one coherent track, in order)
 
-- [ ] **2.1 Multi-cam on RH20T — the immediate build.** Single-timestep, spatial-only:
+- [x] **2.1 Multi-cam on RH20T — the immediate build.** Single-timestep, spatial-only:
       `[B, 1, n_cam·196, 768]` (the `1` = one tick, explicitly no temporal). Plays to our validated strength
       (v0.1 works at C=1; low architectural risk), and RH20T has **both** multi-view and F/T so it keeps the
       force / cross-modal story alive. Delivers JQ's actual ask: does the Perceiver bottleneck compress N views
       without tanking RankMe / probe R² (Perceiver-compression stress), and can the VLA consume one compressed
-      latent instead of `n_cam·196` patch tokens (saves LLM context). Arch plan in TEMPORAL_ARCH §17; JQ's
-      multi-cam file = `mm_perceiver3.py`.
-- [ ] **2.2 Next-embedding predictor on the frozen per-frame encoder — temporal, relocated.** LeWM-style:
+      latent instead of `n_cam·196` patch tokens (saves LLM context). JQ's multi-cam file =
+      `mm_perceiver3.py`; DONE — the spec is the code (`train_multicam.py`); numbers in RESULTS.md §5c.
+- [x] **2.2 Next-embedding predictor on the frozen per-frame encoder — temporal, relocated.** LeWM-style:
       per-frame `z_t` → predict the future latent, keeping the v0.1 cross-modal head + joint-SIGReg. This is
       simultaneously (a) JQ's "JEPA for time," (b) the temporal capability we wanted, and (c) the de-risk for
       the FLARE integration (the cheaper, fully-specified intermediate while FLARE code is unreleased). Target
@@ -71,9 +107,14 @@ rollout model; ours feeds a VLA that already handles time."
       roll it forward under actions → that IS loss #4 and the encoder→world-model step. Time lives here, not in
       the encoder. **SIGReg-under-time rule still holds:** per-timestep marginal, never a time-pooled latent
       (mirrored in paper §3.5, PR #8).
-- [ ] **2.3 Molmobot + downstream VLA test — the real validation.** Port the multi-cam encoder to Molmobot
-      (needs mp4→ViT-patch precompute + a bytes→JSON h5 loader) and test whether a VLA trains better on our
-      latents. This is "is the encoder useful," the actual goal.
+- [~] **2.3 Downstream validation = FLARE-style integration (ELEVATED); Molmobot bespoke test DEFERRED.**
+      The downstream payoff is plugging our per-frame encoder in as FLARE's target encoder g(·): the VLA gets an
+      auxiliary loss predicting our future-observation latents. **2.2 is the standalone prototype of the same
+      future-latent bet** — the predictor and FLARE are one line of work at two levels (standalone vs in-policy),
+      so 2.2 directly de-risks this. Gated on FLARE code being unreleased → reimplement its auxiliary loss on an
+      open VLA and/or coordinate with GR00T (§External validation lead). The separate **port-to-Molmobot
+      downstream test is parked for now** (needs mp4→ViT-patch precompute + a bytes→JSON h5 loader; Molmobot has
+      no force/torque so it can't carry our differentiator) — revisit once 2.2 + the FLARE path are moving.
 
 **Data decision (RH20T vs Molmobot — sequence, don't choose).** Do **2.1 multi-cam on RH20T first** (known-good
 data, has F/T), then swap to Molmobot on a validated architecture — one variable at a time (arch change, then
@@ -89,16 +130,35 @@ real-arm rig that may have force; check if the F/T question becomes decisive.)
 (2.2) next-embedding predictor beats single-frame on future-state at varying Δt with RankMe stable. Loss #4
 (action-conditioned) only after 2.2.
 
-**Execution notes — cheap pre-checks + guardrails: [TEMPORAL_ARCH.md](TEMPORAL_ARCH.md) §21.** Key points:
+**Execution notes — cheap pre-checks + guardrails (consolidated in [V0.2.md](V0.2.md)).** Key points:
 the two builds are **independent** (predictor runs on existing `phase1` + `caches/cfg*.npz`; multi-cam needs a
 new K-camera re-precompute) so order is a priority call; **pre-check the predictor NOW** with a simple
 `z_t→z_{t+Δ}` fit vs naive carry-forward before building the belief-state; **guardrails** — freeze the encoder
 (training the encoder is what broke v0.2), predict the latent *set* not a pooled vector, §2.2 is the
 *unconditioned* precursor to loss #4, and watch multi-cam for bottleneck rank-collapse (fix = more latents).
+**Pre-check A DONE + GREEN (2026-07-17):** a simple `z_t→z_{t+Δ}` predictor beats carry-forward by ~25–35 %
+across all embodiments → §2.2 worth building. Results: [results/temporal/RESULTS.md](results/temporal/RESULTS.md) §4.
+
+### Next steps after 2.1 + 2.2 (detailed recipe consolidated in [V0.2.md](V0.2.md) §Next steps)
+Each grounded in a paper template; order = validation first, capability in parallel.
+- **N1. Downstream encoder-swap test — the real validation (FLARE ablation discipline).** Fix one policy
+  (behavior cloning / small diffusion policy), swap ONLY the observation encoder (raw ViT → SigLIP-2/DINOv2 →
+  ours frozen → ours+predictor), measure **task success from rollouts**. Not gated on FLARE code — the fuller
+  future-latent-auxiliary-loss version comes when GR00T coordination lands. **Dataset:** Molmobot = usefulness
+  test only (has success flags/actions/language/5-cam but **no force/torque**); prefer pretrain-on-Molmobot vs
+  transfer-from-RH20T (real→sim confound); force-in-downstream stays an RH20T item.
+- **N2. Action-conditioned predictor — world-model capability (LeWM + V-JEPA 2-AC; parallel track).** Separate
+  predictor `ẑ_{t+1}=pred(z_t,a_t)`, MSE in latent space, action via AdaLN. **Biggest borrow: DROP the EMA** —
+  LeWM shows SIGReg-on-marginal prevents collapse, and SIGReg is already our method (clean diff vs FLARE/V-JEPA).
+  Then optional V-JEPA-2-AC-style planning (roll forward → MPC) as the eval. This is loss #4.
+- **N3. Denser re-precompute + write-up (EgoScale methodology).** Report prediction loss as a cheap scaling
+  proxy but **validate against real downstream success** (never one metric). Re-precompute native-rate frames
+  if fine dynamics (contact onset) are needed — our Pre-check A green was long-horizon only (~1.7 s/tick cache).
 
 **Retired temporal-in-encoder — kept for the record, not the roadmap.** The mTAN/Time2Vec continuous-time
 embedding, per-stream 1D-CNN tokenizers, continuous-time-vs-resample ablation, and the *window-Perceiver "(a)"*
-are archived in TEMPORAL_ARCH §18/§20 + TEMPORAL_JOURNAL. That is the *time-in-encoder* design; it goes live
+are in git history (`TEMPORAL_ARCH.md` §18/§20 + `TEMPORAL_JOURNAL.md`, removed 07-21,
+`git show 8432258:<file>`). That is the *time-in-encoder* design; it goes live
 again only if we ever build a **standalone rollout world-model** (V-JEPA-2-style goal). The recurrent
 carry-forward "(b)" survives — it is now §2.2, the predictor.
 

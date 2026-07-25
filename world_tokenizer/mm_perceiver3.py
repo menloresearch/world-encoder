@@ -18,6 +18,12 @@ single camera (K=1) every path collapses exactly to mm_perceiver2's behavior.
 [[B, 196, 768], ...] of length K (K cameras). Everything else (motor, ee, masks, losses)
 is unchanged from mm_perceiver2.
 
+Camera-id embedding (V0.2.md Build 1): pass n_cam_ids>0 at init and cam_ids [B, K] long
+to forward/embed_vision, and each camera's 196 tokens get a learned per-SERIAL embedding
+added in the fuse context (serials are stable physical viewpoints; slot order is not).
+Only the fuse context sees it — targets and the online/SIGReg embeddings stay raw so the
+K=1 / cam_ids=None path is exactly mm_perceiver2's recipe.
+
 Packet validity masks are True=VALID; CrossAttention attn_mask is True=BLOCKED —
 inverted in _attn_mask. ee can be entirely absent: those samples are excluded from the ee
 prediction/SIGReg terms rather than averaged over zero valid elements (NaN trap). No
@@ -46,9 +52,11 @@ def masked_mean(x, mask):
 
 class MMPerceiverChunks(nn.Module):
     def __init__(self, d=256, vis_dim=768, n_queries=8, lamb=0.02, ema=0.99,
-                 n_slices=512):
+                 n_slices=512, n_cam_ids=0):
         super().__init__()
         self.proj_v = nn.Linear(vis_dim, d)             # vision patch: 768 -> d
+        self.cam_emb = nn.Parameter(torch.randn(n_cam_ids, d) * 0.02) \
+            if n_cam_ids else None                      # per-serial camera-id emb
         self.proj_m = nn.Linear(2 * MOTOR_CH, d)        # motor row: 3 masked vals + 3 mask bits -> d
         self.proj_e = nn.Linear(EE_DIM, d)              # ee slot: 15 -> d
         self.mod = nn.Parameter(torch.randn(3, d) * 0.02)          # modality emb (v, m, e)
@@ -92,29 +100,38 @@ class MMPerceiverChunks(nn.Module):
         # zero invalid channels, append the mask bits -> [B, 8, 6]
         return torch.cat([motor * m_mask, m_mask.float()], dim=-1)
 
-    def _context(self, rgb, mfeat, ee):
+    def _context(self, rgb, mfeat, ee, cam_ids=None):
         cams = self._rgb_list(rgb)
-        vt = torch.cat([self.proj_v(c) for c in cams], dim=1) + self.mod[0]  # [B,K*196,d]
+        vts = [self.proj_v(c) for c in cams]
+        if cam_ids is not None:                          # [B,K] -> add per-camera id emb
+            vts = [v + self.cam_emb[cam_ids[:, k]].unsqueeze(1) for k, v in enumerate(vts)]
+        vt = torch.cat(vts, dim=1) + self.mod[0]                             # [B,K*196,d]
         mt = self.proj_m(mfeat) + self.mod[1] + self.pos_m                   # [B,8,d]
         et = self.proj_e(ee) + self.mod[2] + self.pos_e                      # [B,13,d]
         return torch.cat([vt, mt, et], dim=1)                               # [B,K*196+21,d]
 
-    def _attn_mask(self, n_vis, m_row_valid, e_mask, hide=()):
+    def _attn_mask(self, n_vis, m_row_valid, e_mask, hide=(), cam_keep=None):
         """[B, M, K*196+21] bool, True=BLOCKED: invalid tokens always + modalities in
-        `hide`. n_vis = K*196 vision tokens; all cameras are blocked/shown together."""
+        `hide`. n_vis = K*196 vision tokens; all cameras are blocked/shown together
+        unless cam_keep [B,K] (True=keep) blocks dropped cameras per sample."""
         B, dev = m_row_valid.shape[0], m_row_valid.device
         t_ctx = n_vis + N_MOTOR + EE_T
-        bv = torch.full((B, n_vis), "v" in hide, dtype=torch.bool, device=dev)
+        if cam_keep is not None and "v" not in hide:
+            bv = (~cam_keep).repeat_interleave(n_vis // cam_keep.shape[1], dim=1)
+        else:
+            bv = torch.full((B, n_vis), "v" in hide, dtype=torch.bool, device=dev)
         bm = torch.ones_like(m_row_valid) if "m" in hide else ~m_row_valid
         be = torch.ones_like(e_mask) if "e" in hide else ~e_mask
         blocked = torch.cat([bv, bm, be], dim=1)             # [B, K*196+21]
         return blocked.unsqueeze(1).expand(B, self.n_queries, t_ctx)
 
-    def forward(self, rgb, motor, m_mask, ee, e_mask):
+    def forward(self, rgb, motor, m_mask, ee, e_mask, cam_ids=None, cam_keep=None):
+        # cam_keep [B,K] True=keep: per-sample camera dropout on the CONTEXT only —
+        # targets stay full-view, so partial contexts get implicit subset->full pressure.
         cams = self._rgb_list(rgb)
         n_vis = sum(c.shape[1] for c in cams)                # K*196
         mfeat = self.motor_feats(motor, m_mask)
-        ctx = self._context(cams, mfeat, ee)
+        ctx = self._context(cams, mfeat, ee, cam_ids)
         m_row_valid = m_mask.any(-1)                         # [B,8]
         e_any = e_mask.any(-1)                               # [B]
 
@@ -125,8 +142,10 @@ class MMPerceiverChunks(nn.Module):
             te = masked_mean(self.tgt_e(ee), e_mask)         # zeros where ~e_any (excluded)
 
         z_no_v = self.fuse(ctx, self._attn_mask(n_vis, m_row_valid, e_mask, hide=("v",)))
-        z_no_m = self.fuse(ctx, self._attn_mask(n_vis, m_row_valid, e_mask, hide=("m",)))
-        z_no_e = self.fuse(ctx, self._attn_mask(n_vis, m_row_valid, e_mask, hide=("e",)))
+        z_no_m = self.fuse(ctx, self._attn_mask(n_vis, m_row_valid, e_mask, hide=("m",),
+                                                cam_keep=cam_keep))
+        z_no_e = self.fuse(ctx, self._attn_mask(n_vis, m_row_valid, e_mask, hide=("e",),
+                                                cam_keep=cam_keep))
 
         inv = (self.pred["v"](z_no_v) - tv).square().mean() \
             + (self.pred["m"](z_no_m) - tm).square().mean()
@@ -136,7 +155,8 @@ class MMPerceiverChunks(nn.Module):
         # online vision emb: concat post-proj_v across cameras, then mean-pool -> [B,d]
         ev = torch.cat([self.proj_v(c) for c in cams], dim=1).mean(1)
         em = masked_mean(self.proj_m(mfeat), m_row_valid)
-        z_full = self.fuse(ctx, self._attn_mask(n_vis, m_row_valid, e_mask))
+        z_full = self.fuse(ctx, self._attn_mask(n_vis, m_row_valid, e_mask,
+                                                cam_keep=cam_keep))
         sig = self.sigreg(ev) + self.sigreg(em) + self.sigreg(z_full)
         if int(e_any.sum()) >= 8:                            # enough samples for a stable term
             sig = sig + self.sigreg(masked_mean(self.proj_e(ee), e_mask)[e_any])
@@ -145,10 +165,10 @@ class MMPerceiverChunks(nn.Module):
                 "z": z_full.detach()}
 
     @torch.no_grad()
-    def embed_vision(self, rgb, motor, m_mask, ee, e_mask):
+    def embed_vision(self, rgb, motor, m_mask, ee, e_mask, cam_ids=None):
         """z_v: fused latent from VISION ONLY (motor + ee hidden) — the eval latent."""
         cams = self._rgb_list(rgb)
         n_vis = sum(c.shape[1] for c in cams)
-        ctx = self._context(cams, self.motor_feats(motor, m_mask), ee)
+        ctx = self._context(cams, self.motor_feats(motor, m_mask), ee, cam_ids)
         return self.fuse(ctx, self._attn_mask(n_vis, m_mask.any(-1), e_mask,
                                               hide=("m", "e")))
