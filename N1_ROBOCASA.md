@@ -75,6 +75,26 @@ next steps). Next steps decided there: v0.3 objective with object/scene pressure
 close 0.335→0.413 action-readout) → rerun hybrid; true FLARE aux-loss row (future-latent
 alignment, uses the validated predictor); SeeSE3 probes; resampler pre-check.
 
+## 2026-07-25: Slack Q&A on the weekly update — the data-parity / fairness record
+Thread questions on the Friday update (data size? same data as baseline? pretraining asymmetry
+favoring the baseline?) + Ishneet's answers — recorded here as the doc-of-record for "was the
+comparison fair":
+- **Data parity:** all four arms (baseline / e2e / pt-enc / hybrid) trained on the SAME 500
+  human demos (PnP), 500 steps/epoch × 400-epoch recipe, evals at matched ckpts, 2 seeds.
+  No arm saw data another didn't.
+- **No pretraining asymmetry favoring the baseline** — if anything it favors Kepler: the
+  encoder got EXTRA in-domain JEPA pretraining (26.6k frames, stride 5, from those same 500
+  demos — Key-builds #3) on top of the shared demos, and still added nothing downstream.
+- **"500 demos isn't a lot" cuts the other way:** low-data is exactly where a frozen
+  pretrained feature should help MOST; it still lost → the null result is stronger, not weaker.
+- **On "we need better metrics" (thread suggestion):** pretraining metrics did say it worked
+  (state R² 0.673 vs raw 0.538, no collapse) while downstream lost — but the latent didn't fail
+  because we measured wrong: the state-predicting objective has no pressure to keep object/scene
+  detail, so it discarded what the policy needs (action-readout 0.335 vs 0.413 raw patches).
+  The encoder did what we trained it for. Metrics that WOULD have predicted the failure
+  (action-readout, SeeSE3) become v0.3 gates. In-thread consensus: next week = better
+  loss + better metrics (matches brain-internal#4).
+
 ## 2026-07-24: fleet fully resumed — final data generating (superseded by close-out above)
 Resume states: **baseline s1** (`16.22.47`) resumed 07-23 as DDP-4/GPUs 0–3 (bs 48×4=192 parity),
 **COMPLETE** — trained through ep449 internally (finished 07-24 04:23; last saved+eval'd ckpt = ep400),
