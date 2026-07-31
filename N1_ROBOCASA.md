@@ -100,7 +100,7 @@ Resume states: **baseline s1** (`16.22.47`) resumed 07-23 as DDP-4/GPUs 0–3 (b
 **COMPLETE** — trained through ep449 internally (finished 07-24 04:23; last saved+eval'd ckpt = ep400),
 full curve in the CSV. **Hybrid s0** (`04.21.45`) resumed 07-23 DDP-2/GPUs 6+7 (~9.1 min/ep, no z-cache),
 at ep247 as of 07-24 04:30 → ep400 ETA ~07-25 04:00. **Hybrid s1** (`10.43.21`) resumed 07-24 04:37
-(Claude) from ep200 latest.ckpt (zip-verified), original recipe verbatim: DDP-4/GPUs 0–3, bs 48×4,
+from ep200 latest.ckpt (zip-verified), original recipe verbatim: DDP-4/GPUs 0–3, bs 48×4,
 seed 1, kepler_z_cache (~3.2 min/ep) → ep400 ETA ~07-24 15:30, log `/tmp/dp_hybrid_s1_resume.log`.
 **Watchers consolidated 07-24:** old tmux `eval_watcher` (still aimed at cuda:6/7 = s0's TRAINING GPUs —
 OOM/contention risk) and the 07-23 watcher killed; single `eval_watcher4` (pid 3701520, log
@@ -126,9 +126,9 @@ mean a from-scratch DDP restart — no ckpt before ep 50 — for ~no wall-clock 
 | — (STOPPED) | — | Kepler e2e / pt-enc OD (replacement claim dead; ep-50 ckpt+eval kept) | OpenDrawer | `16.29.16` (paused ~ep35) / `16.37.21` (stopped ep51, eval 22%) |
 | **dp_hybrid** | **6,7 DDP-2** | **HYBRID seed 0** (relaunched 07-21 04:21, bs 96×2; ep77 @16:20) | PnP | `2026.07.21/04.21.45_…hybrid_kepler_pnp` |
 | **dp_hybrid_s1** | **0–3 DDP-4** | **HYBRID seed 1** — 06:38 launch DIED ~08:30 (zero ckpts, `06.38.26` dir dead); relaunched fresh 10:43 as DDP-4 + `kepler_z_cache` (~3.2 min/ep — ep104 @16:20, laps seed 0) | PnP | `2026.07.21/10.43.21_…hybrid_kepler_pnp` |
-| **dp_baseline_s1** | **4** | **baseline DP seed 1** (launched 16:22 by Claude, single-GPU bs192 recipe parity w/ seed 0 + training.seed=1; log `/tmp/dp_baseline_s1.log`, no tmux — setsid-detached pid 2701723) | PnP | `2026.07.21/16.22.47_…hybrid_pnp_single` |
+| **dp_baseline_s1** | **4** | **baseline DP seed 1** (launched 16:22, single-GPU bs192 recipe parity w/ seed 0 + training.seed=1; log `/tmp/dp_baseline_s1.log`, no tmux — setsid-detached pid 2701723) | PnP | `2026.07.21/16.22.47_…hybrid_pnp_single` |
 | eval_watcher | 6,7 (eval slots) | re-armed 06:45; still lists dead `06.38.26` (will simply never fire) | — | CSV `results/downstream/n1_results_snapshot_20260721.csv` |
-| eval_watcher2 | 5 | launched 16:30 by Claude for the two runs watcher-1 doesn't know: `10.43.21` (s1 ep50+ep100 queued immediately) + `16.22.47`; same CSV (append-mode, safe); log `/tmp/eval_watcher2.log`, pid 2704064 | — | same CSV |
+| eval_watcher2 | 5 | launched 16:30 for the two runs watcher-1 doesn't know: `10.43.21` (s1 ep50+ep100 queued immediately) + `16.22.47`; same CSV (append-mode, safe); log `/tmp/eval_watcher2.log`, pid 2704064 | — | same CSV |
 
 Ep-150 cull done. The camera-dropout retrain turned out to have ALREADY run in the 10:33 session
 (ckpt `kuka_mc4_dropout` on NAS 11:27) — post-retrain probes + per-cam breakdown completed ~16:50:
