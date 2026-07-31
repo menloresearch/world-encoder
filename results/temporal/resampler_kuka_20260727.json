@@ -1,0 +1,59 @@
+{
+ "args": {
+  "v0": "/mnt/nas/data/RH20T/checkpoints/phase1/kuka/seed0.pt",
+  "cache_dir": "/mnt/nas/data/RH20T/caches",
+  "cfgs": [
+   6,
+   7
+  ],
+  "tag": "kuka_resampler",
+  "window": 8,
+  "ctx": 4,
+  "deltas": [
+   1,
+   2,
+   3
+  ],
+  "stride": 2,
+  "epochs": 200,
+  "batch": 512,
+  "lr": 0.0003,
+  "depth": 3,
+  "hid": 1024,
+  "patience": 20,
+  "load_batch": 128,
+  "workers": 4,
+  "seed": 0,
+  "out": "results/temporal/resampler_kuka_20260727.json"
+ },
+ "params": 2439425,
+ "per_delta": {
+  "1": {
+   "pred_mse": 0.15212605893611908,
+   "carry_mse": 0.19119930267333984,
+   "pred_over_carry_mse": 0.7956412853451845,
+   "r2": 0.1520632654428482,
+   "rankme": 122.66468342960812
+  },
+  "2": {
+   "pred_mse": 0.17343978583812714,
+   "carry_mse": 0.2380036562681198,
+   "pred_over_carry_mse": 0.7287274009048873,
+   "r2": 0.08545845001935959,
+   "rankme": 124.79828208307326
+  },
+  "3": {
+   "pred_mse": 0.18020328879356384,
+   "carry_mse": 0.2596261501312256,
+   "pred_over_carry_mse": 0.6940875897997247,
+   "r2": 0.04293340444564819,
+   "rankme": 126.54742411974885
+  }
+ },
+ "best_pred_over_carry_mse": 0.6940875897997247,
+ "reference_tickt_predictor": {
+  "1": 0.724,
+  "2": 0.674,
+  "3": 0.651
+ }
+}
