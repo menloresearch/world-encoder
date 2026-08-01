@@ -5,7 +5,7 @@
 experiments), `V0.4.md` (new encoder design), `E6_BUILD_20260729.md` (force test setup),
 `research/v04/` (design research), `N1_ROBOCASA.md` + `V0.2.md` (history).
 
-_Last updated: 2026-07-31 ~1:50pm. All times in this doc are LOCAL (UTC+8); server
+_Last updated: 2026-08-01 ~evening. All times in this doc are LOCAL (UTC+8); server
 logs, run dirs, and the detail docs are in UTC — subtract 8h when cross-referencing._
 
 ## What we're building and why
@@ -244,8 +244,62 @@ Known soft spots (and the cover for each):
   reset-and-step force regen (nonstandard, restores live force scale).
 - brain-internal#1 correction comment (old readout numbers — never cite them).
 - Git: everything since 07-27 is uncommitted — commit checkpoint recommended before v0.4 builds.
+  *(07-31: committed+pushed through `93475d6`. Now uncommitted: 08-01 doc updates — V0.4.md
+  §7.1-7.2 + this file.)*
+- JQ encoder rebuild: build go-ahead once the thread fully converges (spec = V0.4.md §7.2);
+  it runs in PARALLEL with the wave-2 pick, not instead of it. Wave-2 pick itself still open;
+  GPUs 0-7 free. Two ROLLOUT-FREE options can start immediately and don't conflict:
+  (a) shift-robustness eval on existing wave-1 ckpts (deep-research #1, ~0.5 GPU-night);
+  (b) INTACT family-metric calibration (08-01 addendum below): predicted-vs-expert action-family
+  kNN/CKA from small heads on cached z, correlated against the SR numbers already in our CSVs
+  (~a day; pre-registered: it can only rank encoders, not insertion modes — success = orders
+  v0.2/v0.3/v0.4sa/raw consistently with best-insertion SR; would be the funnel's first
+  non-kill-only screening signal).
 
 ## Update log (newest first)
+- **08-01 (evening addendum): read INTACT, arXiv 2607.26056 (Zhejiang/Tsinghua AIR, 28 Jul;
+  single read — claims transcribed, NOT adversarially verified).** JEPA world model built on
+  LeWM (our Build-2 recipe source; same SIGReg family we use) + ONE shared action-likelihood
+  operator fed displacement intents — local z_{t+1}−z_t attached, goal sg(z_g)−z_t stop-grad —
+  trained end-to-end. Amortizes planning: direct intent→action at 2.9-5.5ms vs CEM 1.48s
+  (~300×); search demoted to an optional 128×3 verifier (+16pts over pure CEM at 23× fewer
+  samples). Scope caveats: four simple sim tasks (PushT/Cube/Reacher/TwoRoom), offline experts,
+  no real robot, no OOD, and they ADMIT the Gaussian-mean actor can hide multimodality exactly
+  at contact transitions — not contact-rich evidence. Three takes for us: **(1) the diagnostic**
+  — predicted-vs-expert action-FAMILY kNN/CKA (small trained action head, neighborhood overlap)
+  tracks closed-loop SR at r≈0.90-0.95 across 45 ckpts, where pointwise action R² is weaker
+  (0.815), effective rank INVERTS (higher rank, lower SR), and intent-cluster purity
+  anticorrelates. Their inversion results + "a frozen head cannot recover a controllable
+  distinction already collapsed by the encoder" = our probes-lie + zo lessons with external
+  corroboration (citable in the writeup). The family-metric is calibratable FOR FREE on our
+  already-evaluated ckpts (zero rollouts, ~a day on z/patch caches). Pre-registered expectation
+  before anyone runs it: an encoder-side metric can only rank ENCODERS, never insertion modes
+  (rc-pool vs rc-cat share one encoder yet score 0.82 vs 0.34) — the test is whether it orders
+  our encoder families (v0.2 / v0.3 / v0.4sa / raw) consistently with their best-insertion SR.
+  If yes → first non-kill-only screening signal the funnel has. **(2) claim-C/ARM ammo:**
+  second 2026 precedent (with CompACT) that compact-latent planning is cheap — and now
+  amortizable to search-free; fits the "planning latency" ARM pivot. **(3) objective-axis
+  candidate for a FUTURE encoder wave (explicitly NOT the JQ rebuild — §7.2 unchanged):**
+  action-NLL on displacement intents inside the encoder objective (INTACT + SMWM + MCR now
+  triangulate action grounding; mm_perceiver3's objective has zero action pressure). Honest
+  headwind: their matched-E1 rows show frozen-rep + post-hoc heads losing big to end-to-end
+  (~65 vs ~95 macro) — consistent with the deep-research frozen-encoder warning; if claim C
+  gets built, the action term belongs IN pretraining, not bolted on after.
+- **08-01: JQ's encoder-rebuild thread converged — spec settled (V0.4.md §7.1-§7.2), nothing
+  launched.** JQ's sketch (strict [B,T,S,P], conv stem over time, spatial-then-temporal
+  resample, one code path incl. T=1) survives with two changes: **fusion keeps the tokens
+  instead of flattening** (the flatten→linear was one lossy 6144→256 contact point — the same
+  worry under all three of his follow-up ideas: MLA, layered cross-attn, dual-path), and
+  **hide-one becomes an attention mask** (zeroed slices leak a learnable "hidden" symbol
+  through biases). Dropped: MLA (we never have a KV cache — one bidirectional pass at any R),
+  the extra-wide fusion trunk, dual-path as a build. Dual-path instead gets a pre-registered
+  gate: after the first build, the temporal z must predict future force + short-horizon EE
+  motion at least as well as plain per-frame z — the exact gate that killed the v0.2 temporal
+  encoder — and only a FAIL earns the second path. Honest downstream read: this rebuild does
+  NOT re-open claims A/B (wave 1 already showed encoder content at parity; insertion and task
+  saturation were the story) — it's the enabling machinery for F rung-1 (multi-rate force) if
+  rung-0 ever passes, and mainly for **claim C** (windowed→compact z is the substrate for
+  latent-MPC + the predictor line, i.e. the live exit axis). Wave-2 priority unchanged.
 - **07-31 (~1:50pm): WAVE 1 CLOSED + deep-research "what next" landed (recovered from a rate-limit crash).**
   Final ep50 board (DDPM-16 fast eval, 50 rollouts): **hybrid-base 0.90 > sb 0.86 ≈ rc-pool
   0.82 ≫ sa-h6 0.54 > rc-cat 0.34 ≫ zo 0.0**; dense-ViT calib footnote: ep50 0.60 vs its
