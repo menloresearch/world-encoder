@@ -268,9 +268,8 @@ Known soft spots (and the cover for each):
   REDESIGN_RESEARCH_20260729 + research/v04/01-06 → NEW v0.4/RESEARCH.md (research/ dir
   removed; the 06 report.json moved to v0.4/). Final md set: root README/SUMMARY/PROGRESS/
   PLAN/DATA + v0.1/EXPERIMENTS.md + v0.2/V0.2.md + v0.3/V0.3.md + v0.4/V0.4.md +
-  v0.4/RESEARCH.md. All cross-references repointed (nav docs, PLAN, memory). NOTE: this file
-  granularity now DIVERGES from the docs branch (which still has the fine split) — decide at
-  next docs sync whether to mirror the merge there.
+  v0.4/RESEARCH.md. All cross-references repointed (nav docs, PLAN, memory). NOTE: the merge was
+  mirrored to the docs branch the same day (82ebbda) — both branches carry the same layout.
 - **08-02 (pt. 6): docs consolidated to the docs-branch layout.** Root now holds only
   README.md, SUMMARY.md (main entry), PROGRESS.md (this tracker), PLAN.md, DATA.md.
   Version folders mirror the `docs` branch exactly: v0.1/ (EXPERIMENTS.md), v0.2/ (V0.2.md,
