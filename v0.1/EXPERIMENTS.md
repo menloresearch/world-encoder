@@ -1,7 +1,7 @@
 # Experiments
 
 Detailed run notes and results per stage. High-level roadmap and design live in the
-[README](README.md). Everything runs on the NAS (`source /mnt/nas/data/RH20T/env.sh`).
+[README](../README.md). Everything runs on the NAS (`source /mnt/nas/data/RH20T/env.sh`).
 
 Standing eval rule (learned in Stage 1): pair **RankMe** (label-free health / collapse detector) with
 an **unsaturated, robot-relevant probe** (predict robot state, or contact/force), always
@@ -86,7 +86,7 @@ Run script: `run_stage2_cfg34.sh`; artifacts: NAS `checkpoints/exp-20260704-0325
   in absolute terms but stays decisive vs the compression control.
 - Beyond cfg3+4 the 28-dim state path breaks (joint dims differ per robot); the multi-cfg
   path is the chunk packet (`chunk_state.py` → `precompute_chunks.py` → `dataloader.py`),
-  used from Phase 1 of [PLAN.md](PLAN.md) onward.
+  used from Phase 1 of [PLAN.md](../PLAN.md) onward.
 - **Still owed before this result goes external:** the vision-only-*trained* Perceiver
   ablation (isolate cross-modal gain from "trained an in-domain encoder").
 
@@ -118,7 +118,7 @@ gains are small (vision already sees the arm). No collapse.
   = **vision-only `z_v`**. Caches on NAS `caches/cfg{1..7}.npz` (~53 GB); `run_matrix.sh`.
 
 **Full numbers (version-controlled):** complete per-run **mean±std for every metric × robot**
-is in [`results/RESULTS.md`](results/RESULTS.md), auto-generated (`compile_results.py`) from
+is in [`results/RESULTS.md`](../results/RESULTS.md), auto-generated (`compile_results.py`) from
 the committed raw per-seed outputs `results/phase1/*.json` (matrix) and
 `results/phase1_abl/*.json` (ablations). Metric definitions in `metrics/METRICS.md`. The
 tables below are the headline cuts.
@@ -135,7 +135,7 @@ probed; 5-seed mean; **bold** = own-robot diagonal):
 | **ALL** | 0.252 | **0.339** | **−0.377** | 0.321 |
 | *raw ViT* | 0.232 | 0.321 | −6.709 | *0.391* |
 
-![transfer matrix — z_v joint R²](figures/all/transfer_matrix_motor.png)
+![transfer matrix — z_v joint R²](../figures/all/transfer_matrix_motor.png)
 
 The ALL row (bottom) is the brightest learned encoder in nearly every column; specialist
 rows go dark off-diagonal — "one encoder for all robots" at a glance. (franka column is dark
@@ -188,23 +188,23 @@ world-states near; different scenes/robots far). RankMe 177.5.
 (kuka / ur5 / flexiv distinct; franka partly overlaps flexiv), with meaningful shared
 structure:
 
-![z_v PCA colored by robot](figures/all/pca_robot.png)
+![z_v PCA colored by robot](../figures/all/pca_robot.png)
 
-![z_v PCA colored by cfg](figures/all/pca_cfg.png)
+![z_v PCA colored by cfg](../figures/all/pca_cfg.png)
 
 Fusion vs baselines (ALL encoder, per robot) — `z_v` beats raw ViT + PCA on force everywhere;
 on joints it wins except kuka:
 
-![fusion vs baselines — joint probe](figures/all/baselines_motor.png)
+![fusion vs baselines — joint probe](../figures/all/baselines_motor.png)
 
-![fusion vs baselines — force probe](figures/all/baselines_ee.png)
+![fusion vs baselines — force probe](../figures/all/baselines_ee.png)
 
 Within a single robot (ur5), `z_v` organizes by **gripper state** — a clean open→closed
 gradient — evidence the latent encodes continuous world-state, not just robot identity
 (force magnitude does *not* surface in PCA — it's the hard-from-vision signal the probe R²
 measures, not a scatter):
 
-![within-ur5 z_v PCA colored by gripper width](figures/ur5/pca_gripper.png)
+![within-ur5 z_v PCA colored by gripper width](../figures/ur5/pca_gripper.png)
 
 **kuka-joints diagnostic** (why raw beats fusion in that one cell): per-motor-dim probe on
 kuka shows raw ViT reads kuka *joint angles* superbly (0.8–0.9 R² on the sin/cos dims) —
@@ -231,7 +231,7 @@ Since architecture and compute are identical, this is *purely cross-modal fusion
 out "the gain is just in-domain training." (franka is a wash: tiny, force-blind config, both
 near-degenerate.) The 4 specialists show the same pattern. RankMe healthy (~180–195) for both.
 
-![fused vs vision-only-trained — cross-modal gain](figures/all/cross_modal_gain.png)
+![fused vs vision-only-trained — cross-modal gain](../figures/all/cross_modal_gain.png)
 
 **Bottleneck sweep** (ur5, motor/ee, 5-seed): d=128 → 0.356/0.147 · d=256 → 0.324/0.156 ·
 d=512 → **0.255/0.122 with unstable RankMe (123 ±111 — some seeds collapse)**. Robust across
@@ -275,7 +275,7 @@ ALL encoder on ur5 held-out (n=12,930), valid vs corrupted state:
 Cleanly flags gross/out-of-range anomalies (0.90); modest on subtle mismatches (0.69). A
 direct robot-safety anomaly detector on the encoder we already have.
 
-![surprise flags invalid robot state](figures/surprise/surprise_hist.png)
+![surprise flags invalid robot state](../figures/surprise/surprise_hist.png)
 
 ### robot_state decoder — "superpowered probe" (PLAN 3.1)
 A small MLP decodes the **frozen** vision-only `z_v` → joint state (encoder frozen; only the
@@ -294,7 +294,7 @@ shows what the latent kept vs discarded. **Final 30k-step checkpoint** (ur5; qua
 blue mat, wood-grain table, green pool table, and object/arm placement all come back cleanly,
 arm region the roughest.
 
-![pixel decode — real (top) vs decoded-from-z_v (bottom), final 30k](figures/decode/recon.png)
+![pixel decode — real (top) vs decoded-from-z_v (bottom), final 30k](../figures/decode/recon.png)
 
 **Replay GIFs** (`make_gif.py`): decode a held-out episode's *latent trajectory* frame-by-frame
 into a video — real (top) vs decoded-from-`z_v` (bottom) playback. This is reconstruction/replay
@@ -307,11 +307,11 @@ scenes degrade (the "keeps world-state, drops fine texture" tradeoff made visibl
 - `replay_1.gif` — task_0008, **cardboard sheet**: degrades (the tan sheet blurs to a light smear).
 - `replay_2.gif` — task_0010, **multi-object clutter**: fails (small objects smear to blobs).
 
-![replay — task_0004 blue mat, clean (real top / decoded bottom)](figures/decode/gifs/replay_0.gif)
+![replay — task_0004 blue mat, clean (real top / decoded bottom)](../figures/decode/gifs/replay_0.gif)
 
-![replay — task_0008 cardboard, degrades](figures/decode/gifs/replay_1.gif)
+![replay — task_0008 cardboard, degrades](../figures/decode/gifs/replay_1.gif)
 
-![replay — task_0010 clutter, fails](figures/decode/gifs/replay_2.gif)
+![replay — task_0010 clutter, fails](../figures/decode/gifs/replay_2.gif)
 
 **Cross-modal decode (Variant 2, DONE — 30k).** Mirror experiment: same PixNerd decoder, but
 conditioned on the **state-only** latent `z_state` (vision hidden, motor+ee only — `embed_state`,
@@ -322,13 +322,13 @@ mat colors, objects, the pool table are replaced by generic guessed surfaces (th
 in force/joints). So: **proprioception reconstructs the robot, not the world** — a shared-latent-
 space demonstration, and an honest negative on scene content. Qualitative; not evidence for fusion.
 
-![cross-modal decode — real (top) vs decoded from STATE-only z_state (bottom): arm pose recovers, scene guessed](figures/decode/recon_state.png)
+![cross-modal decode — real (top) vs decoded from STATE-only z_state (bottom): arm pose recovers, scene guessed](../figures/decode/recon_state.png)
 
 Replay GIFs (state-only): `figures/decode/gifs_state/replay_{0,1,2}.gif`.
 
-![robot_state decoded from frozen vision-only latent](figures/decoder/state_decode.png)
+![robot_state decoded from frozen vision-only latent](../figures/decoder/state_decode.png)
 
-![gripper open/closed ROC from z_v](figures/decoder/gripper_roc.png)
+![gripper open/closed ROC from z_v](../figures/decoder/gripper_roc.png)
 
 ### Metrics audit (2026-07-07, code inspection)
 Re-verified before standing behind results: **no train/test leakage** — group-held-out

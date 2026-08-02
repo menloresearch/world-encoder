@@ -15,10 +15,12 @@ proprioception- and force-relevant structure that raw frozen-ViT features do not
 Trained and evaluated on the **RH20T** real-robot corpus (7 configs, 4 embodiments). This is a v0.1
 technical report validating the **single-timestep** case; native-rate temporal fusion is the next step.
 
+- 📌 **Program overview (start here):** [`SUMMARY.md`](SUMMARY.md) — problem, results, diagnosis, next steps.
+- 📓 **Live tracker:** [`PROGRESS.md`](PROGRESS.md) — updated every working session.
 - 📄 **Paper:** [`paper/main.tex`](paper/main.tex) — full method, results, related work.
-- 📊 **Results:** [`EXPERIMENTS.md`](EXPERIMENTS.md) — the single ground-truth log (transfer matrix, ablations, downstream).
+- 📊 **v0.1 results:** [`v0.1/EXPERIMENTS.md`](v0.1/EXPERIMENTS.md) — the ground-truth log (transfer matrix, ablations, downstream).
 - 🗂 **Data:** [`DATA.md`](DATA.md) — RH20T layout, per-config analysis, timing model.
-- 🗺 **Roadmap:** [`PLAN.md`](PLAN.md).
+- 🗺 **Roadmap history:** [`PLAN.md`](PLAN.md). Phase docs live in [`v0.2/`](v0.2/), [`v0.3/`](v0.3/), [`v0.4/`](v0.4/) (design doc + research).
 
 ## Repository layout
 
@@ -59,12 +61,12 @@ the top of each):
 ```
 
 Numbers and figures land in `results/` and `figures/`; the narrative is in
-[`EXPERIMENTS.md`](EXPERIMENTS.md).
+[`v0.1/EXPERIMENTS.md`](v0.1/EXPERIMENTS.md).
 
 ## Status & contributing
 
-v0.1 — single-timestep, on RH20T. v0.2 work in progress: **multi-camera fusion** (per-frame) + a
-**next-embedding predictor** on the frozen encoder (time lives in the predictor, not the encoder —
-the original multi-frame-in-encoder design was tested and retired). The plan-vs-actual narrative is
-in [`STORY.md`](STORY.md); roadmap in [`PLAN.md`](PLAN.md); live v0.2 doc = [`V0.2.md`](V0.2.md).
-Issues and PRs are welcome — please keep new results reproducible and logged in `EXPERIMENTS.md`.
+v0.1 (single-timestep, RH20T) is published. The downstream program that followed — v0.2
+multi-camera + predictor, v0.3 insertion sweep, v0.4 state-as-query and wave 1 — is summarized
+with verdicts in [`SUMMARY.md`](SUMMARY.md); the live session tracker is
+[`PROGRESS.md`](PROGRESS.md); the current design doc is [`v0.4/V0.4.md`](v0.4/V0.4.md).
+Issues and PRs are welcome — please keep new results reproducible and logged.

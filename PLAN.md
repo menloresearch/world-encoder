@@ -2,18 +2,18 @@
 
 Rewritten 2026-07-06 after the weekend's work landed on `user/jiaqi` (see DATA.md /
 METRICS.md there). Supersedes the 2026-07-03 PLAN (kept in git history). Results in
-[EXPERIMENTS.md](EXPERIMENTS.md); data in [DATA.md](DATA.md).
+[EXPERIMENTS.md](v0.1/EXPERIMENTS.md); data in [DATA.md](DATA.md).
 
 ## Current status (2026-07-22)
 
 *(Plan-vs-actual history: see [Timeline](#timeline--plan-vs-actual-the-pivots) below — STORY.md was
 folded in here 07-22, full narrative in git history.)*
 Roadmap-level: **Phase 1 DONE + PUBLISHED** (one-encoder-for-all holds, force = the clean cross-modal
-win; [EXPERIMENTS.md](EXPERIMENTS.md)). **Phase 2 temporal-in-encoder RETIRED** (NH1 gate failed twice;
+win; [EXPERIMENTS.md](v0.1/EXPERIMENTS.md)). **Phase 2 temporal-in-encoder RETIRED** (NH1 gate failed twice;
 [results/temporal/RESULTS.md](results/temporal/RESULTS.md); full design + saga in git history —
 `TEMPORAL_ARCH.md`/`TEMPORAL_JOURNAL.md`, removed 07-21, `git show 8432258:<file>`). **v0.2 re-scoped (07-17) and BOTH BUILDS DONE + GREEN (07-19):** multi-cam holds rank AND
 improves force (0.283 vs 0.251); predictor beats carry-forward 28–36%/horizon. Canonical v0.2 doc =
-[V0.2.md](V0.2.md) (incl. pending JQ follow-ups: camera-dropout retrain + probes). **N1 on RoboCasa** ([N1_ROBOCASA.md](N1_ROBOCASA.md)): encoder-as-REPLACEMENT is dead (14%/2% vs
+[V0.2.md](v0.2/V0.2.md) (incl. pending JQ follow-ups: camera-dropout retrain + probes). **N1 on RoboCasa** ([N1_ROBOCASA.md](v0.2/V0.2.md)): encoder-as-REPLACEMENT is dead (14%/2% vs
 baseline 32% @ep150; probes pinned the cause — no object-detail pressure in the objective) → pivoted to
 the **FLARE-faithful HYBRID row** (frozen latent ADDED to the policy's vision). Hybrid so far shows
 **no lift at matched epochs** (ep100: 24/24 vs baseline 28; ep150: 24 vs 32; s1 flat ep100→200);
@@ -26,7 +26,7 @@ missing before concluding: baseline-s1 curve + hybrid-s0 ep150. **Fleet DOWN sin
 |---|---|---|
 | Stage 0–2 + Phase 1 matrix | one encoder for all robots (single-timestep) | ✅ DONE + published |
 | Downstream (surprise · state/pixel decode) | the encoder is *useful* on the frozen model | ✅ DONE |
-| Phase 2 (v0.2) — re-scoped | per-frame multi-cam encoder + time-in-predictor | ✅ both builds DONE + GREEN (07-19); JQ follow-ups pending ([V0.2.md](V0.2.md)) |
+| Phase 2 (v0.2) — re-scoped | per-frame multi-cam encoder + time-in-predictor | ✅ both builds DONE + GREEN (07-19); JQ follow-ups pending ([V0.2.md](v0.2/V0.2.md)) |
 | N1 downstream (RoboCasa) | the latent helps a *policy* (task success) | 🔴 replacement FAIL (gate closed) → 🔁 HYBRID: no lift at matched epochs yet; fleet down (disk-full), resume pending |
 | Phase 3 — Decoder (video) | shows what the latent knows | ✅ pipeline done (PixNerd) |
 | Loss #4 (action-cond.) · Audio · FLARE g(·) · ARM | causality / modalities / external | ⏸️ N2 unparks on RoboCasa commanded actions; ARM/FLARE external |
@@ -34,7 +34,7 @@ missing before concluding: baseline-s1 curve + hybrid-s0 ep150. **Fleet DOWN sin
 ## Timeline — plan vs actual (the pivots)
 
 - **…→07-07 — v0.1 bet WORKS:** one multimodal JEPA encoder across all RH20T robots; gate passed
-  (5-seed matrix; force = the clean cross-modal win) → paper published ([v0.1/](EXPERIMENTS.md)).
+  (5-seed matrix; force = the clean cross-modal win) → paper published ([v0.1/](v0.1/EXPERIMENTS.md)).
   ARM + GEAR/FLARE external leads born here.
 - **07-15→17 — temporal-in-encoder FAILS, RETIRED:** NH1 gate failed twice under two objectives
   (present-force probe halved 0.10 vs 0.21, RankMe 51 vs 134) — temporal fusion itself dilutes the
@@ -57,13 +57,13 @@ missing before concluding: baseline-s1 curve + hybrid-s0 ep150. **Fleet DOWN sin
 - **07-21 23:39 — disk-full killed the whole fleet** (relaunched runs wrote 2.4G ckpts locally);
   **07-22 recovered:** all ckpts moved/verified to NAS + run dirs NAS-symlinked, disk 98→86%, NAS
   cache purge freed 3.6T. Hybrid s1 curve 32/24/24/24 @ep50–200 = no lift at matched epochs yet
-  ([N1_ROBOCASA.md](N1_ROBOCASA.md)).
+  ([N1_ROBOCASA.md](v0.2/V0.2.md)).
 
 ## Phase 1, downstream, and the 2026-07 groundwork — DONE (archived)
 
 The downstream-first pivot, the weekend preprocessing log, the `user/jiaqi` code review, the full-RH20T
 blockers, and the Phase-1 build checklist all lived here. They are **complete** and were pruned for
-brevity — the record is in git history + [EXPERIMENTS.md](EXPERIMENTS.md) + [DATA.md](DATA.md). One-liner:
+brevity — the record is in git history + [EXPERIMENTS.md](v0.1/EXPERIMENTS.md) + [DATA.md](DATA.md). One-liner:
 chunk pipeline → 5×4 matrix + ablations → **gate PASSED 2026-07-07** → paper published; downstream
 (surprise AUROC 0.90; state R² 0.45 / joint 0.69; PixNerd pixel decode) all shipped, in EXPERIMENTS.md.
 
@@ -130,7 +130,7 @@ real-arm rig that may have force; check if the F/T question becomes decisive.)
 (2.2) next-embedding predictor beats single-frame on future-state at varying Δt with RankMe stable. Loss #4
 (action-conditioned) only after 2.2.
 
-**Execution notes — cheap pre-checks + guardrails (consolidated in [V0.2.md](V0.2.md)).** Key points:
+**Execution notes — cheap pre-checks + guardrails (consolidated in [V0.2.md](v0.2/V0.2.md)).** Key points:
 the two builds are **independent** (predictor runs on existing `phase1` + `caches/cfg*.npz`; multi-cam needs a
 new K-camera re-precompute) so order is a priority call; **pre-check the predictor NOW** with a simple
 `z_t→z_{t+Δ}` fit vs naive carry-forward before building the belief-state; **guardrails** — freeze the encoder
@@ -139,7 +139,7 @@ new K-camera re-precompute) so order is a priority call; **pre-check the predict
 **Pre-check A DONE + GREEN (2026-07-17):** a simple `z_t→z_{t+Δ}` predictor beats carry-forward by ~25–35 %
 across all embodiments → §2.2 worth building. Results: [results/temporal/RESULTS.md](results/temporal/RESULTS.md) §4.
 
-### Next steps after 2.1 + 2.2 (detailed recipe consolidated in [V0.2.md](V0.2.md) §Next steps)
+### Next steps after 2.1 + 2.2 (detailed recipe consolidated in [V0.2.md](v0.2/V0.2.md) §Next steps)
 Each grounded in a paper template; order = validation first, capability in parallel.
 - **N1. Downstream encoder-swap test — the real validation (FLARE ablation discipline).** Fix one policy
   (behavior cloning / small diffusion policy), swap ONLY the observation encoder (raw ViT → SigLIP-2/DINOv2 →
