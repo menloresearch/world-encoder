@@ -1,0 +1,18 @@
+{
+ "arm": "z8",
+ "dyn_params": 3293952,
+ "bench": {
+  "call_ms_median": 258.37564328685403,
+  "call_ms_p95": 259.4842988066375,
+  "peak_mem_mib": 482.81640625,
+  "vit_ms_median": 4.474240588024259
+ },
+ "horizon": 8,
+ "pop": 256,
+ "history": 1,
+ "ensemble": 5,
+ "test_mean_score": 0.12606249911425418,
+ "wall_sec": 1024.5167912808247,
+ "n_planner_calls": 750,
+ "closedloop_call_ms_median": 1341.1492148879915
+}

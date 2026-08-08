@@ -1,0 +1,19 @@
+[
+ {
+  "arm": "dense_patches",
+  "dim": 75264,
+  "pairs": 1989,
+  "probe_r2_per_state_dim": [
+   1.0,
+   1.0,
+   1.0,
+   1.0,
+   1.0
+  ],
+  "probe_r2_mean": 1.0,
+  "task_relevant_frac_mean": 0.007527,
+  "task_relevant_frac_median": 0.005859,
+  "rowspace_k": 5,
+  "frac_if_random_subspace": 6.6e-05
+ }
+]

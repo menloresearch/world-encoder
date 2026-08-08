@@ -1,0 +1,16 @@
+{
+ "arm": "dense",
+ "dyn_params": 3670528,
+ "bench": {
+  "call_ms_median": 1371.4213846251369,
+  "call_ms_p95": 1373.092133156024,
+  "peak_mem_mib": 1442.92431640625,
+  "vit_ms_median": 4.319452214986086
+ },
+ "horizon": 12,
+ "pop": 512,
+ "test_mean_score": 0.10157755697815402,
+ "wall_sec": 10313.644071369432,
+ "n_planner_calls": 750,
+ "closedloop_call_ms_median": 13721.52350191027
+}

@@ -1,0 +1,97 @@
+[
+ {
+  "arm": "z8_latents",
+  "dim": 2048,
+  "pairs": 1989,
+  "probe_r2_per_state_dim": [
+   0.9815,
+   0.9879,
+   0.9884,
+   0.9942,
+   0.9447
+  ],
+  "probe_r2_mean": 0.9794,
+  "probe_r2_mean_INSAMPLE": 0.9977,
+  "n_train": 1392,
+  "task_relevant_frac_mean": 0.001344,
+  "task_relevant_frac_median": 0.001098,
+  "rowspace_k": 5,
+  "frac_if_random_subspace": 0.002441
+ },
+ {
+  "arm": "q4_latents",
+  "dim": 1024,
+  "pairs": 1989,
+  "probe_r2_per_state_dim": [
+   0.9846,
+   0.9887,
+   0.9896,
+   0.9938,
+   0.9389
+  ],
+  "probe_r2_mean": 0.9791,
+  "probe_r2_mean_INSAMPLE": 0.9947,
+  "n_train": 1392,
+  "task_relevant_frac_mean": 0.002206,
+  "task_relevant_frac_median": 0.001799,
+  "rowspace_k": 5,
+  "frac_if_random_subspace": 0.004883
+ },
+ {
+  "arm": "q16_latents",
+  "dim": 4096,
+  "pairs": 1989,
+  "probe_r2_per_state_dim": [
+   0.9845,
+   0.9897,
+   0.9897,
+   0.9946,
+   0.9369
+  ],
+  "probe_r2_mean": 0.9791,
+  "probe_r2_mean_INSAMPLE": 0.9994,
+  "n_train": 1392,
+  "task_relevant_frac_mean": 0.001044,
+  "task_relevant_frac_median": 0.000875,
+  "rowspace_k": 5,
+  "frac_if_random_subspace": 0.001221
+ },
+ {
+  "arm": "fsq_latents",
+  "dim": 2048,
+  "pairs": 1989,
+  "probe_r2_per_state_dim": [
+   0.8958,
+   0.9356,
+   0.8872,
+   0.913,
+   0.7607
+  ],
+  "probe_r2_mean": 0.8785,
+  "probe_r2_mean_INSAMPLE": 0.8824,
+  "n_train": 1392,
+  "task_relevant_frac_mean": 0.049368,
+  "task_relevant_frac_median": 0.043769,
+  "rowspace_k": 5,
+  "frac_if_random_subspace": 0.002441
+ },
+ {
+  "arm": "dense_patches",
+  "dim": 75264,
+  "pairs": 1989,
+  "probe_r2_per_state_dim": [
+   0.9701,
+   0.9949,
+   0.9816,
+   0.9952,
+   0.9097
+  ],
+  "probe_r2_mean": 0.9703,
+  "probe_r2_mean_INSAMPLE": 1.0,
+  "n_train": 1392,
+  "task_relevant_frac_mean": 0.007527,
+  "task_relevant_frac_median": 0.005859,
+  "rowspace_k": 5,
+  "frac_if_random_subspace": 6.6e-05
+ }
+]

@@ -1,0 +1,53 @@
+[
+ {
+  "arm": "z8_latents",
+  "dim": 2048,
+  "pairs": 1989,
+  "probe_r2_per_state_dim": [
+   0.9978,
+   0.9978,
+   0.9986,
+   0.9992,
+   0.9907
+  ],
+  "probe_r2_mean": 0.9968,
+  "task_relevant_frac_mean": 0.001359,
+  "task_relevant_frac_median": 0.001107,
+  "rowspace_k": 5,
+  "frac_if_random_subspace": 0.002441
+ },
+ {
+  "arm": "fsq_latents",
+  "dim": 2048,
+  "pairs": 1989,
+  "probe_r2_per_state_dim": [
+   0.9246,
+   0.9413,
+   0.8825,
+   0.915,
+   0.7528
+  ],
+  "probe_r2_mean": 0.8833,
+  "task_relevant_frac_mean": 0.048297,
+  "task_relevant_frac_median": 0.042212,
+  "rowspace_k": 5,
+  "frac_if_random_subspace": 0.002441
+ },
+ {
+  "arm": "dense_patches",
+  "dim": 75264,
+  "pairs": 1989,
+  "probe_r2_per_state_dim": [
+   1.0,
+   1.0,
+   1.0,
+   1.0,
+   1.0
+  ],
+  "probe_r2_mean": 1.0,
+  "task_relevant_frac_mean": 0.006469,
+  "task_relevant_frac_median": 0.005262,
+  "rowspace_k": 5,
+  "frac_if_random_subspace": 6.6e-05
+ }
+]
