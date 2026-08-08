@@ -2621,3 +2621,149 @@ Vote and source quality: three constituent claims survived only 2-1 (Hansen doma
 - https://arxiv.org/pdf/2606.14153 (primary, 5 claims extracted)
 - https://arxiv.org/abs/2407.20179 (primary, 5 claims extracted)
 - https://arxiv.org/abs/2410.22325 (primary, 5 claims extracted)
+
+
+# ============================================================================
+# v0.5 planning-armor deep research (08-05) — RAW VERIFIED CLAIM LEDGER
+# ============================================================================
+
+Two deep-research runs were launched on the v0.5 design brief (encoder changes that buy
+low-compute/low-N, robustness, and planning while task success is only MAINTAINED). BOTH
+lost their synthesis stage to API rate limits: run 1 returned 0/25 surviving verifier
+panels (pure infrastructure failure), run 2 returned 8 confirmed / 0 refuted / 17
+unverified with synthesis skipped. No report file was produced by the harness.
+
+This appendix is the recovered raw ledger, preserved because the workflow outputs lived in
+/tmp. The synthesis and the resulting decisions are in PROGRESS.md pt. 32. Nothing here was
+REFUTED — "unverified" means the adversarial panel never ran, not that the claim failed.
+
+Run stats: 5 search angles, 25-26 sources, 125-129 extracted claims, 107 agents per run,
+~1.29M + ~0.94M tokens.
+
+## Confirmed claims (survived 3-vote adversarial verification)
+
+These are the load-bearing ones. Votes are of the form confirm-refute.
+
+- **Claim.** CompACT plans with as few as 8 discrete FSQ tokens per observation and achieves approximately 40x lower planning latency than a 784-token continuous SD-VAE baseline while maintaining comparable planning accuracy (RECON navigation, Table 4: CompACT-8 ATE 1.373 / 4.83s vs SD-VAE ATE 1.262 / 178.78s), using sampling-based (CEM) or gradient-based optimization over the latent world model.
+  - source: https://arxiv.org/html/2603.05438
+  - adversarial vote: 3-0
+  - quote: Our CompACT achieves approximately 40× reduction in planning latency while maintaining comparable planning accuracy to the SD-VAE baseline that uses 784 tokens.
+
+- **Claim.** CompACT's architecture is a near-twin of Kepler's — learnable query tokens cross-attending frozen foundation-ViT (DINOv3-B) patch features — with the one decisive difference that the resampler output is discretized via finite scalar quantization (FSQ, levels [8,8,8,5,5,5]); this is an existence proof that optimizer-driven planning over 8 query-derived compact tokens does not collapse when the tokens are discrete.
+  - source: https://arxiv.org/html/2603.05438
+  - adversarial vote: 3-0
+  - quote: these latent tokens attend to the DINOv3 output patch tokens via cross-attention layers, effectively distilling high-level semantic cues from the pretrained representations. ... The output of the latent resampler is then discretized using finite scalar quantization, yielding discrete latent tokens
+
+- **Claim.** The paper provides NO direct evidence or argument that discreteness resists off-manifold planner/optimizer exploitation versus continuous latents — the exact evidence RQ1(i) seeks is absent; the paper's stated mechanism for why 8 tokens suffice for planning is semantic distillation from the frozen foundation encoder, not quantization armor, so any 'discrete tokens resist exploitation' recipe drawn from CompACT is inference from its results, not a tested claim.
+  - source: https://arxiv.org/html/2603.05438
+  - adversarial vote: 3-0
+  - quote: Because vision foundation models already abstract away low-level reconstruction details—focusing instead on semantic understanding—our resampling process can only distill planning-critical semantic information.
+
+- **Claim.** In DCWM's direct ablation, world models with discrete latent spaces significantly outperform otherwise-matched continuous latent spaces in sample efficiency on continuous-control tasks — direct evidence bearing on whether discreteness helps compact-latent world models, though framed as learning efficiency rather than off-manifold planner exploitation.
+  - source: https://arxiv.org/abs/2503.00653
+  - adversarial vote: 3-0
+  - quote: The experiments using discrete latent spaces (red and purple) significantly outperform the ones with continuous latent spaces in terms of sample efficiency.
+
+- **Claim.** The benefit of the discrete latent is attributed specifically to stochasticity, not discreteness alone: a deterministic discrete latent trained with MSE regression underperforms a stochastic discrete latent trained with cross-entropy classification, and straight-through Gumbel-softmax sampling during multi-step dynamics rollouts is what helps world-model learning.
+  - source: https://arxiv.org/abs/2503.00653
+  - adversarial vote: 2-1
+  - quote: training a deterministic discrete latent space using MSE regression (red) does not perform as well as training a stochastic discrete latent space using classification (purple)... the benefit arises from the stochasticity of our latent space... using straight-through Gumbel-softmax sampling when making multi-step dynamics predictions is beneficial for world model learning.
+
+- **Claim.** At decision/planning time DC-MPC deliberately does NOT sample from its stochastic dynamics — it plans over the expected code (weighted sum over codebook codes, valid because FSQ codes are ordinally arranged) to avoid introducing stochasticity the MPPI planner could interact with; this is the paper's only explicit planner-exploitation-adjacent measure, a design choice rather than a measured exploitation-resistance result.
+  - source: https://arxiv.org/abs/2503.00653
+  - adversarial vote: 3-0
+  - quote: we do not sample from the transition dynamics... because this introduces unwanted stochasticity. Instead, we take the expected code, which is a weighted sum over the codes in the codebook... our discrete codes have an ordering such that expected values simply interpolate between the codes in the codebook.
+
+- **Claim.** The paper diagnoses the same failure mode Kepler measured today: gradient-based optimization over a learned world model induces adversarial action sequences that exploit model inaccuracies and drive the model into out-of-distribution states where errors compound — i.e., planner exploitation is optimization-induced, not a dynamics-learnability problem.
+  - source: https://arxiv.org/html/2512.09929
+  - adversarial vote: 3-0
+  - quote: During planning, the intermediate sequence of actions explored by gradient descent drive the world model into states that were not encountered during training. In these out-of-distribution states, model errors compound. ... gradient optimization can induce adversarial action sequences that exploit model inaccuracies.
+
+- **Claim.** Adversarial World Modeling — finetuning the world model on FGSM-perturbed states/actions to smooth the action-loss landscape — substantially improves planning success on the DINO-WM PushT harness: Table 1 reports PushT success rising from 38% to 56% (gradient descent), 54% to 82% (Adam), and 78% to 94% (CEM) versus the DINO-WM baseline, without changing the latent architecture.
+  - source: https://arxiv.org/html/2512.09929
+  - adversarial vote: 3-0
+  - quote: Adversarial World Modeling smooths the induced action loss landscape. ... Adversarial training has been shown to result in better behaved input gradients, consequently smoothing the input loss surface.
+
+## Unverified claims (extracted and sourced; verifier panel never ran)
+
+Treat as leads, not evidence. Several are decision-relevant — in particular the Push-T-specific NEGATIVE results on RC-aux and TRM, which is why they appear in the pt. 32 downgrade.
+
+- **Claim.** With their finetuned world models, gradient-based planning matches or beats CEM across manipulation and navigation tasks at roughly 10x lower planning cost — direct evidence for Kepler's axis-3 target (~10x cheaper latent MPC) being achievable once the model is exploitation-hardened.
+  - source: https://arxiv.org/html/2512.09929
+
+- **Claim.** In a 55-game Atari ablation, replacing Gaussian latents with vectors of categorical latents (32 categoricals x 32 classes, trained with straight-through gradients) improved performance on 42 tasks, hurt on 8, and tied on 5; removing discrete latents drops gamer-normalized median from 1.64 to 1.08 and clipped record mean from 0.25 to 0.19 (Table 2).
+  - source: https://arxiv.org/pdf/2010.02193
+
+- **Claim.** The paper provides NO established mechanism for why discrete latents help — it explicitly states the reason is unknown and offers only untested hypotheses (categorical prior can perfectly fit the aggregate posterior; sparsity of a 1024-length binary vector with 32 active bits; easier straight-through optimization; better inductive bias for non-smooth multi-modal changes). It is therefore not direct evidence that discreteness resists off-manifold optimizer exploitation.
+  - source: https://arxiv.org/pdf/2010.02193
+
+- **Claim.** DreamerV2 does not use an online trajectory optimizer (no CEM/MPC shooting): behaviors are learned by an amortized actor-critic trained on imagined latent rollouts, with the world model held fixed — so its discrete-latent success is not a direct test of planner-exploitation resistance in the CEM setting where the Kepler failure occurs.
+  - source: https://arxiv.org/pdf/2010.02193
+
+- **Claim.** TD-MPC2 bounds its latent space with SimNorm — projecting the latent vector into L fixed-dimensional simplices via softmax — explicitly to mitigate exploding gradients, and deliberately chooses this over discrete codes or squashing because it biases the representation toward sparsity without hard constraints. This is direct primary evidence that a bounded, sparsity-biased continuous normalization (not discretization) is one verified recipe for stable compact latents used under MPPI planning.
+  - source: https://arxiv.org/html/2310.16828v2
+
+- **Claim.** The predecessor TD-MPC (which lacks SimNorm and TD-MPC2's normalization stack) sometimes diverges due to exploding gradients, whereas TD-MPC2 remains stable — an ablation-adjacent stability result tying latent normalization to avoiding divergence when a planner optimizes against the learned model. Note: the paper ablates SimNorm and other normalization choices (Figure 9), but the fetched text did not surface exact per-ablation numbers, so the magnitude of SimNorm's contribution should be verified against the PDF figure.
+  - source: https://arxiv.org/html/2310.16828v2
+
+- **Claim.** CompACT (KAIST/POSTECH/RLWRLD, CVPR 2026) encodes each frame into 8-16 discrete FSQ tokens (~16 bits/token, 128-256 bits/frame, levels [8,8,8,5,5,5], ~2^16 codes per token) produced by learnable query tokens cross-attending a FROZEN DINOv3-B backbone — architecturally near-identical to Kepler's 8-query design except discrete instead of continuous; their ablation also shows frozen DINOv3 + latent resampler (rFID 2.40) beats finetuned DINOv3 + resampler (5.22) and ViT-from-scratch (7.28).
+  - source: https://openreview.net/pdf?id=z9KgtDP6LB
+
+- **Claim.** An action-conditioned world model planning over CompACT's 8-16 discrete tokens achieves ~40x lower planning latency than a 784-continuous-token SD-VAE baseline at comparable planning accuracy (goal-conditioned navigation, RECON: CompACT-16 latency 5.78s vs SD-VAE 178.78s per trajectory; ATE 1.330 vs 1.262) — direct precedent for Kepler's axis-3 target of ~10x cheaper latent MPC with success maintained, not improved. Caveat: the planning benchmarks are navigation (RECON/SCAND), not the DINO-WM PushT harness.
+  - source: https://openreview.net/pdf?id=z9KgtDP6LB
+
+- **Claim.** In closed-loop manipulation with cross-entropy-method planning (RoboMimic Lift), the compact discrete latent exactly maintains the dense baseline's success rate (56% vs 56% for the 256-token target tokenizer) while completing episodes in fewer steps (55.1 vs 66.8) — i.e., 16 discrete tokens did NOT exhibit the closed-loop planning collapse that Kepler's 8 continuous tokens show on PushT (~0.05 vs 0.86), consistent with (but not proving) the hypothesis that discreteness confers exploitation armor.
+  - source: https://openreview.net/pdf?id=z9KgtDP6LB
+
+- **Claim.** NEGATIVE FINDING for RQ1: the paper contains no analysis of planner/optimizer exploitation whatsoever — the full text has zero occurrences of 'exploit', 'off-manifold', 'adversarial', or 'hallucinat' (verified by grep of the arXiv HTML). It attributes planning success to semantic abstraction, so CompACT is an existence proof that CEM planning over ~8 discrete tokens works, NOT direct evidence that discreteness resists off-manifold optimizer exploitation versus continuous latents.
+  - source: https://openreview.net/pdf?id=z9KgtDP6LB
+
+- **Claim.** Replacing raw Euclidean latent distance with a learned trajectory-reachability metric (TRM) as the planner's terminal cost lifts latent-MPC success on the TwoRoom benchmark from 7.0% to 97.0% with the LeWM world model, while a shuffled temporal-label control stays at 0.0% — direct evidence that a cost-shaping repair alone can fix a world model whose latents contain the right state but whose planner fails.
+  - source: https://arxiv.org/abs/2605.22164
+
+- **Claim.** The repair is strictly post-hoc and planner-facing: TRM trains only a small pairwise ranking head from logged trajectory structure, with the encoder, dynamics, sampler, and optimizer all kept fixed — meaning Kepler could apply it to existing frozen v0.4/wave-1 checkpoints without retraining the encoder, and the claimed key ingredient is horizon-matched supervision (training on broad, balanced temporal separations).
+  - source: https://arxiv.org/abs/2605.22164
+
+- **Claim.** The paper offers mechanistic evidence for exactly the Kepler failure signature (model ranks true actions correctly / state is decodable, yet planning fails): XY position is linearly decodable at R^2=0.998, yet raw latent MSE misranks candidates because the XY-probe rowspace accounts for less than 1% of terminal-goal latent MSE while carrying most of the candidate-quality signal — i.e., Euclidean cost mass sits on task-irrelevant latent dimensions that the optimizer can exploit.
+  - source: https://arxiv.org/abs/2605.22164
+
+- **Claim.** On PushT (go50/go75) — the same task family as the DINO-WM harness Kepler uses — TRM's gains show up in ranking/endpoint audits but do NOT translate as cleanly into closed-loop success, and the authors themselves fall back to recommending hybrid (not replacement) costs for continuous manipulation; this is a material caveat on transferring the TwoRoom 7%→97% headline to Kepler's setting.
+  - source: https://arxiv.org/abs/2605.22164
+
+- **Claim.** Adding RC-aux (budget-conditioned reachability supervision with temporal hard negatives plus multi-horizon open-loop prediction) to a LeWM-style latent world model raises planning success on the Wall task from 50.4% to 83.6% (+33.2pp) — this verifies the research brief's '+33pp' citation, but the gain is specifically on Wall, not across the suite.
+  - source: https://arxiv.org/abs/2605.07278
+
+- **Claim.** The paper diagnoses the same failure mode Kepler measured with CEM: a sampling planner that rolls out candidates and minimizes latent goal-matching cost can select rollouts that end near the goal in Euclidean latent distance via shortcuts not supported by feasible finite-horizon transitions — i.e., optimizer exploitation of latent geometry rather than dynamics error.
+  - source: https://arxiv.org/abs/2605.07278
+
+- **Claim.** On Push-T — the exact task family where Kepler's planning failure occurs — RC-aux produced NO improvement (Table 1: LeWM 91.2% vs RC-aux 90.8%, −0.4pp); the paper attributes this to the baseline already being in a high-success regime, meaning the +33pp evidence does not directly demonstrate a fix for a PushT planner that starts at ~0.05 success.
+  - source: https://arxiv.org/abs/2605.07278
+
+## Source ledger
+
+- https://arxiv.org/html/2603.05438
+- https://arxiv.org/abs/2503.00653
+- https://arxiv.org/html/2512.09929
+- https://arxiv.org/pdf/2010.02193
+- https://arxiv.org/html/2310.16828v2
+- https://openreview.net/pdf?id=z9KgtDP6LB
+- https://arxiv.org/abs/2605.22164
+- https://arxiv.org/abs/2605.07278
+- https://arxiv.org/abs/2607.16591
+- https://arxiv.org/abs/2210.00030
+- https://arxiv.org/abs/2304.01203
+- https://arxiv.org/abs/2605.16692
+- https://arxiv.org/abs/2305.16985
+- https://arxiv.org/abs/2304.04591
+- https://arxiv.org/abs/2312.12444
+- https://arxiv.org/abs/2303.18240
+- https://arxiv.org/pdf/2203.03580
+- https://arxiv.org/abs/2502.03270
+- https://arxiv.org/abs/2409.03685
+- https://arxiv.org/abs/2409.03403
+- https://arxiv.org/html/2511.09932
+- https://arxiv.org/abs/2302.02408
+- https://arxiv.org/abs/2603.05438
+- https://arxiv.org/abs/2607.27017
+- https://arxiv.org/html/2605.07931v1
+
