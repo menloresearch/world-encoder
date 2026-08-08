@@ -1,0 +1,9 @@
+[
+ {
+  "axis": "camera",
+  "severity": 0,
+  "mean_ssim": 0.8576,
+  "std_ssim": 0.0432,
+  "n": 18
+ }
+]

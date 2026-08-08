@@ -1,0 +1,44 @@
+[
+ {
+  "axis": "lighting",
+  "severity": 1,
+  "mean_ssim": 0.9834,
+  "std_ssim": 0.0002,
+  "n": 18
+ },
+ {
+  "axis": "lighting",
+  "severity": 2,
+  "mean_ssim": 0.8861,
+  "std_ssim": 0.0032,
+  "n": 18
+ },
+ {
+  "axis": "color",
+  "severity": 1,
+  "mean_ssim": 0.9967,
+  "std_ssim": 0.0001,
+  "n": 18
+ },
+ {
+  "axis": "color",
+  "severity": 2,
+  "mean_ssim": 0.9911,
+  "std_ssim": 0.0003,
+  "n": 18
+ },
+ {
+  "axis": "camera",
+  "severity": 1,
+  "mean_ssim": 0.4836,
+  "std_ssim": 0.1401,
+  "n": 18
+ },
+ {
+  "axis": "camera",
+  "severity": 2,
+  "mean_ssim": 0.2339,
+  "std_ssim": 0.2176,
+  "n": 18
+ }
+]

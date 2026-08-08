@@ -1,0 +1,13 @@
+arm,axis,severity,score,wall_sec
+hybrid_base,camera,1,0.72,64.1
+sb,camera,1,0.6,77.1
+hybrid_base,camera,2,0.0,67.8
+sb,camera,2,0.02,76.6
+hybrid_base,lighting,1,0.74,70.0
+sb,lighting,1,0.76,76.4
+hybrid_base,lighting,2,0.14,68.7
+sb,lighting,2,0.44,79.6
+hybrid_base,color,1,0.9,63.2
+sb,color,1,0.82,76.1
+hybrid_base,color,2,0.38,63.2
+sb,color,2,0.44,72.5

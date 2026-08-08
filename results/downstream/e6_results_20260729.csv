@@ -13,3 +13,9 @@ run,task,epoch,ckpt,success
 07.50.06_train_densepatch_tool_hang_ft,ft,40,epoch=0040-test_mean_score=-1.000,0.4
 07.50.06_train_densepatch_tool_hang_noft,noft,50,epoch=0050-test_mean_score=-1.000,0.64
 07.50.06_train_densepatch_tool_hang_ft,ft,50,epoch=0050-test_mean_score=-1.000,0.62
+07.50.06_train_densepatch_tool_hang_noft,noft,60,epoch=0060-test_mean_score=-1.000,0.58
+07.50.06_train_densepatch_tool_hang_ft,ft,60,epoch=0060-test_mean_score=-1.000,0.6
+07.50.06_train_densepatch_tool_hang_noft,noft,70,epoch=0070-test_mean_score=-1.000,0.54
+07.50.06_train_densepatch_tool_hang_ft,ft,70,epoch=0070-test_mean_score=-1.000,0.6
+07.50.06_train_densepatch_tool_hang_noft,noft,80,epoch=0080-test_mean_score=-1.000,0.86
+07.50.06_train_densepatch_tool_hang_ft,ft,80,epoch=0080-test_mean_score=-1.000,0.64
